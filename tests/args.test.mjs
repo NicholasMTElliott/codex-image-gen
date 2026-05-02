@@ -2,12 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runTool } from './helpers.mjs';
 
-test('1. --help exits 0 with usage on stderr', async () => {
+test('1. --help exits 0 with usage on stdout', async () => {
+  // POSIX convention: explicit --help goes to stdout (so users can pipe it).
+  // Usage-due-to-error (missing required arg) goes to stderr — see tests 2 & 3.
   const r = await runTool(['--help']);
   assert.equal(r.code, 0);
-  assert.match(r.stderr, /Usage:/);
-  assert.match(r.stderr, /--style/);
-  assert.match(r.stderr, /--subject/);
+  assert.match(r.stdout, /Usage:/);
+  assert.match(r.stdout, /--style/);
+  assert.match(r.stdout, /--subject/);
 });
 
 test('2. missing --style exits 2 and prints usage', async () => {

@@ -1,6 +1,6 @@
 ---
 name: codex-image-gen
-description: Generate raster/bitmap images (PNG) — icons, logos, faction emblems, illustrations, photos, textures, sprites, hero art, mockups — by shelling out to OpenAI's codex CLI. Uses the user's ChatGPT subscription billing (NOT API tokens). Invoke when the user asks for an image asset and Claude Code lacks a built-in image-generation tool. Does NOT use this skill for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), edits to existing images, or modifications of an established icon system in the repo.
+description: Generate raster/bitmap images (PNG) — icons, logos, faction emblems, illustrations, photos, textures, sprites, hero art, mockups — by shelling out to OpenAI's codex CLI. Uses the user's ChatGPT subscription billing (NOT API tokens). Invoke when the user asks for an image asset and Claude Code lacks a built-in image-generation tool. Do NOT use this skill for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), edits to existing images, or modifications of an established icon system in the repo.
 allowed-tools:
   - Bash(node <<SCRIPT_PATH>> *)
 ---

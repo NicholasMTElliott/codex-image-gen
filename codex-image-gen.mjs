@@ -53,10 +53,10 @@ function parseArgs(argv) {
     else if (arg === '--subject') { subject = next ?? ''; i++; }
     else if (arg === '--generate') { generate = parseInt(next ?? '', 10); i++; }
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
-    else if (arg === '-h' || arg === '--help') { printUsage(); process.exit(0); }
+    else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
   }
 
-  if (!style || !subject) { printUsage(); process.exit(2); }
+  if (!style || !subject) { printUsage(process.stderr); process.exit(2); }
   if (!Number.isInteger(generate) || generate < 1) {
     process.stderr.write('error: --generate must be a positive integer\n');
     process.exit(2);
@@ -73,8 +73,8 @@ function parseArgs(argv) {
   return { style, subject, generate, select };
 }
 
-function printUsage() {
-  process.stderr.write(
+function printUsage(stream = process.stderr) {
+  stream.write(
     `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M]
 
 Required:
@@ -141,7 +141,9 @@ function listImages(dir) {
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && IMAGE_EXTS.test(e.name))
     .map((e) => join(dir, e.name))
-    .sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs);
+    // mtime primary; filename tiebreaker so equal-mtime files (FAT32 2s
+    // resolution, fast generation in the same ms) sort deterministically.
+    .sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs || a.localeCompare(b));
 }
 
 function runCodex(prompt, env, cwd) {

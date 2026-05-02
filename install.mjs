@@ -15,7 +15,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -150,7 +150,11 @@ function patchSettings(allowRule) {
   }
   settings.permissions.allow.push(allowRule);
   mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
-  writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + '\n');
+  // Atomic write: temp + rename. If we crash mid-write, the user's existing
+  // settings.json is untouched rather than half-overwritten.
+  const tmpPath = `${SETTINGS_PATH}.tmp-${process.pid}`;
+  writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n');
+  renameSync(tmpPath, SETTINGS_PATH);
   log(`  [ok] allow rule added to ${SETTINGS_PATH}${existed ? '' : ' (new file)'}`);
   return true;
 }

@@ -3,7 +3,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,8 +17,19 @@ export const FAKE_CODEX_SCRIPT = join(__dirname, 'fake-codex', 'codex.mjs');
 
 const IS_WIN = process.platform === 'win32';
 
+// Track every temp dir we create so we can clean them up at process exit.
+// Without this, repeated `npm test` runs accumulate cruft under $TMPDIR.
+const tempDirs = [];
+process.on('exit', () => {
+  for (const dir of tempDirs) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+});
+
 export function mktempDir(prefix = 'cig-test-') {
-  return mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
 }
 
 /**

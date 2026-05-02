@@ -176,7 +176,7 @@ The tmp dir accumulates one subfolder per run. It's safe to delete the entire `.
 
 ## Compatibility notes
 
-- Tested on Windows 11 + codex CLI 0.125 against a ChatGPT Team plan. POSIX (macOS, Linux) is **unverified** as of writing — the spawn logic conditionally branches on platform and *should* work, but please open an issue if you hit anything platform-specific.
+- Live-tested on Windows 11 + codex CLI 0.125 against a ChatGPT Team plan. POSIX (macOS, Linux) is exercised by CI (Ubuntu + macOS, Node 18/20/22) via the fake-codex test harness, but the live billing path on POSIX is unverified — please open an issue if you hit anything platform-specific against a real ChatGPT subscription.
 - `shell: true` is enabled on Windows only (required to spawn the `codex.cmd` shim post-CVE-2024-27980); on POSIX the script uses `shell: false` since `codex` resolves to a real binary.
 - Requires Node 18+ for nullish coalescing (`??`) and `process.removeAllListeners`.
 
