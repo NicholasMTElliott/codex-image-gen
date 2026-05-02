@@ -63,13 +63,26 @@ export function getShimDir() {
  *   cwd: string,
  * }>}
  */
+/**
+ * On Windows, the canonical env-var name is `Path` (mixed case), not `PATH`.
+ * Object spread + `.PATH = ...` would create a *second* key, leaving the
+ * spawned process with two competing entries. Find whichever case-variant
+ * actually exists and update that one in place.
+ */
+function pathKey(env) {
+  return Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+}
+
+function prependShim(env) {
+  const shim = getShimDir();
+  const key = pathKey(env);
+  env[key] = shim + delimiter + (env[key] ?? '');
+}
+
 export function runTool(args, opts = {}) {
   const cwd = opts.cwd ?? mktempDir('cig-cwd-');
   const baseEnv = { ...process.env, ...(opts.env ?? {}), ...(opts.fakeEnv ?? {}) };
-  if (!opts.useRealCodex) {
-    const shim = getShimDir();
-    baseEnv.PATH = shim + delimiter + (baseEnv.PATH ?? '');
-  }
+  if (!opts.useRealCodex) prependShim(baseEnv);
   return spawnAndCapture(process.execPath, [TOOL_PATH, ...args], { cwd, env: baseEnv })
     .then((r) => ({ ...r, cwd }));
 }
@@ -93,8 +106,7 @@ export function runInstaller(opts = {}) {
     USERPROFILE: home,
     ...(opts.env ?? {}),
   };
-  const shim = getShimDir();
-  baseEnv.PATH = shim + delimiter + (baseEnv.PATH ?? '');
+  prependShim(baseEnv);
   return spawnAndCapture(process.execPath, [INSTALL_PATH, ...(opts.args ?? [])], { env: baseEnv })
     .then((r) => ({ ...r, home }));
 }
