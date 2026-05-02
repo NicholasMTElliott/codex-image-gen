@@ -80,6 +80,7 @@ jobs:
             install.mjs \
             SKILL.md \
             README.md \
+            CHANGELOG.md \
             LICENSE
           echo "zip_path=dist/$ZIP_NAME" >> "$GITHUB_OUTPUT"
           unzip -l "dist/$ZIP_NAME"
