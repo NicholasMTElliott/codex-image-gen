@@ -3,7 +3,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,11 @@ process.on('exit', () => {
 });
 
 export function mktempDir(prefix = 'cig-test-') {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  // Resolve symlinks so the value here matches what `process.cwd()` returns
+  // inside the spawned tool. Without this, macOS's /var → /private/var
+  // symlink causes path-equality assertions in the tests to fail (the helper
+  // returns /var/..., the tool reports /private/var/...).
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   tempDirs.push(dir);
   return dir;
 }
