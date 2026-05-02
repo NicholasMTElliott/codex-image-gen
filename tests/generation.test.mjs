@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { mktempDir, readFakeCodexMeta, runTool } from './helpers.mjs';
 
@@ -267,4 +267,30 @@ test('35. --name + --out combine: file lives at <out>/<slug>.png', async () => {
   assert.equal(r.json.ok, true);
   assert.equal(r.json.selected.paths[0], join(r.cwd, 'assets', 'logo.png'));
   assert.ok(existsSync(r.json.selected.paths[0]));
+});
+
+test('36. --style-file / --subject-file: contents land verbatim in the codex prompt, trailing newline trimmed', async () => {
+  const dir = mktempDir('cig-prompt-');
+  const styleFile = join(dir, 'style.md');
+  const subjectFile = join(dir, 'subject.md');
+  // Multi-line contents with a trailing newline (typical editor behavior).
+  // Internal newlines should be preserved; trailing whitespace trimmed.
+  const styleBody = 'distinct-style-marker-CCC\nline two of style';
+  const subjectBody = 'distinct-subject-marker-DDD\nline two of subject';
+  writeFileSync(styleFile, styleBody + '\n\n');
+  writeFileSync(subjectFile, subjectBody + '\n');
+
+  const r = await runTool([
+    '--style-file', styleFile,
+    '--subject-file', subjectFile,
+    '--debug',
+  ]);
+  assert.equal(r.json.ok, true);
+  const meta = readFakeCodexMeta(r.json.workdir);
+  assert.match(meta.prompt, /distinct-style-marker-CCC/);
+  assert.match(meta.prompt, /line two of style/);
+  assert.match(meta.prompt, /distinct-subject-marker-DDD/);
+  assert.match(meta.prompt, /line two of subject/);
+  // Trimmed: no run of blank lines from the trailing newlines we wrote.
+  assert.doesNotMatch(meta.prompt, /line two of style\n\n\n/);
 });

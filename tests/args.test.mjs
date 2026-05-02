@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runTool } from './helpers.mjs';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { mktempDir, runTool } from './helpers.mjs';
 
 test('1. --help exits 0 with usage on stdout', async () => {
   // POSIX convention: explicit --help goes to stdout (so users can pipe it).
@@ -41,4 +43,38 @@ test('5a. --name with disallowed chars is rejected', async () => {
   const r = await runTool(['--style', 's', '--subject', 'x', '--name', '../evil']);
   assert.equal(r.code, 2);
   assert.match(r.stderr, /--name must contain only/);
+});
+
+test('5b. --style + --style-file together is rejected', async () => {
+  const dir = mktempDir('cig-prompt-');
+  const f = join(dir, 'style.txt');
+  writeFileSync(f, 'from-file');
+  const r = await runTool(['--style', 'inline', '--style-file', f, '--subject', 'x']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--style and --style-file are mutually exclusive/);
+});
+
+test('5c. --subject + --subject-file together is rejected', async () => {
+  const dir = mktempDir('cig-prompt-');
+  const f = join(dir, 'subject.txt');
+  writeFileSync(f, 'from-file');
+  const r = await runTool(['--style', 's', '--subject', 'inline', '--subject-file', f]);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--subject and --subject-file are mutually exclusive/);
+});
+
+test('5d. --style-file pointing at a missing file is rejected', async () => {
+  const dir = mktempDir('cig-prompt-');
+  const r = await runTool(['--style-file', join(dir, 'nope.txt'), '--subject', 'x']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /failed to read --style-file/);
+});
+
+test('5e. --style-file with whitespace-only content is rejected as empty', async () => {
+  const dir = mktempDir('cig-prompt-');
+  const f = join(dir, 'blank.txt');
+  writeFileSync(f, '   \n\n  \t\n');
+  const r = await runTool(['--style-file', f, '--subject', 'x']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /is empty/);
 });

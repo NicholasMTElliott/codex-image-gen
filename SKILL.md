@@ -25,8 +25,8 @@ Shells out to the user's locally-installed `codex` CLI to generate raster images
 
 ```bash
 node <<SCRIPT_PATH>> \
-  --style "<style prompt — visual treatment>" \
-  --subject "<subject prompt — what to depict>" \
+  ( --style "<style prompt>" | --style-file <path> ) \
+  ( --subject "<subject prompt>" | --subject-file <path> ) \
   [--generate N] \
   [--select M] \
   [--name SLUG] \
@@ -36,8 +36,10 @@ node <<SCRIPT_PATH>> \
 
 ### Parameters
 
-- `--style` (required, free text). Describes the visual treatment: medium, lighting, palette, line weight, level of detail. Example: `"photorealistic studio product photo, soft lighting, neutral background"`, `"flat vector cartoon, thick black outlines, vibrant flat color, no gradients"`, `"oil painting, dramatic chiaroscuro, baroque, muted earth tones"`.
-- `--subject` (required, free text). Describes what to depict, including any composition / framing / background notes. Be specific. Example: `"two metal swords crossed in an X, transparent background, centered, no scene"`. If you want transparency, say so — codex's default is to use chroma-key removal.
+- `--style` (required if `--style-file` not given). Inline style prompt — describes the visual treatment: medium, lighting, palette, line weight, level of detail. Example: `"photorealistic studio product photo, soft lighting, neutral background"`, `"flat vector cartoon, thick black outlines, vibrant flat color, no gradients"`, `"oil painting, dramatic chiaroscuro, baroque, muted earth tones"`.
+- `--style-file` (required if `--style` not given; mutually exclusive with `--style`). Path to a UTF-8 text file containing the style prompt. Use this for long multi-line style guides (e.g. a coherent visual language for an asset family) that don't shell-escape cleanly. Trailing whitespace is trimmed; internal newlines are preserved.
+- `--subject` (required if `--subject-file` not given). Inline subject prompt — describes what to depict, including any composition / framing / background notes. Be specific. Example: `"two metal swords crossed in an X, transparent background, centered, no scene"`. If you want transparency, say so — codex's default is to use chroma-key removal.
+- `--subject-file` (required if `--subject` not given; mutually exclusive with `--subject`). Path to a UTF-8 text file containing the subject prompt. Same trimming rules as `--style-file`.
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run that would overwrite an existing file, the tool falls back to a sessionId-disambiguated name and emits a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.

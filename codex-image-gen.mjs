@@ -31,7 +31,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 
@@ -49,6 +49,8 @@ const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
 function parseArgs(argv) {
   let style = '';
   let subject = '';
+  let styleFile = '';
+  let subjectFile = '';
   let generate = 1;
   let select = 1;
   let debug = false;
@@ -60,6 +62,8 @@ function parseArgs(argv) {
     const next = argv[i + 1];
     if (arg === '--style') { style = next ?? ''; i++; }
     else if (arg === '--subject') { subject = next ?? ''; i++; }
+    else if (arg === '--style-file') { styleFile = next ?? ''; i++; }
+    else if (arg === '--subject-file') { subjectFile = next ?? ''; i++; }
     else if (arg === '--generate') { generate = parseInt(next ?? '', 10); i++; }
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
     else if (arg === '--name') { name = next ?? ''; i++; }
@@ -67,6 +71,20 @@ function parseArgs(argv) {
     else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
   }
+
+  // --style/--style-file (and --subject/--subject-file) are mutually exclusive.
+  // Reject before reading so users get a clear "you set both" error rather
+  // than silently picking one.
+  if (style && styleFile) {
+    process.stderr.write('error: --style and --style-file are mutually exclusive\n');
+    process.exit(2);
+  }
+  if (subject && subjectFile) {
+    process.stderr.write('error: --subject and --subject-file are mutually exclusive\n');
+    process.exit(2);
+  }
+  if (styleFile) style = readPromptFile(styleFile, '--style-file');
+  if (subjectFile) subject = readPromptFile(subjectFile, '--subject-file');
 
   if (!style || !subject) { printUsage(process.stderr); process.exit(2); }
   if (!Number.isInteger(generate) || generate < 1) {
@@ -91,13 +109,37 @@ function parseArgs(argv) {
   return { style, subject, generate, select, debug, name, out };
 }
 
+function readPromptFile(path, flag) {
+  let contents;
+  try {
+    contents = readFileSync(path, 'utf8');
+  } catch (e) {
+    process.stderr.write(`error: failed to read ${flag} ${path}: ${e.message}\n`);
+    process.exit(2);
+  }
+  // Trim leading/trailing whitespace — file editors typically add a trailing
+  // newline that we don't want bleeding into the prompt. Internal newlines
+  // (multi-line briefs) are preserved.
+  const trimmed = contents.trim();
+  if (!trimmed) {
+    process.stderr.write(`error: ${flag} ${path} is empty\n`);
+    process.exit(2);
+  }
+  return trimmed;
+}
+
 function printUsage(stream = process.stderr) {
   stream.write(
-    `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M] [--name SLUG] [--out DIR] [--debug]
+    `Usage: node codex-image-gen.mjs (--style "<text>" | --style-file <path>) (--subject "<text>" | --subject-file <path>) [--generate N] [--select M] [--name SLUG] [--out DIR] [--debug]
 
-Required:
-  --style      Style prompt (free text — describes visual treatment)
-  --subject    Subject prompt (free text — describes what to depict)
+Required (one of each pair):
+  --style          Style prompt as inline text (visual treatment)
+  --style-file     Read style prompt from a UTF-8 text file. Useful for long
+                   multi-line briefs that don't shell-escape cleanly.
+                   Mutually exclusive with --style.
+  --subject        Subject prompt as inline text (what to depict)
+  --subject-file   Read subject prompt from a UTF-8 text file. Mutually
+                   exclusive with --subject.
 
 Optional:
   --generate   Number of variants to generate (default: 1)

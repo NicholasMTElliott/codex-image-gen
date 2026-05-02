@@ -37,7 +37,7 @@ Installer paths:
 - Optional: Claude Code (only needed for the auto-invoked skill).
 
 ## Tooling patterns
-- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation; `--name` optional slug (`[A-Za-z0-9._-]+`); `--out` optional dir (relative or absolute); `--debug` optional flag (preserves tmp on success). `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number, invalid slug) prints to stderr and exits 2.
+- **CLI shape:** style and subject prompts required, each via inline (`--style` / `--subject`) or from a file (`--style-file` / `--subject-file`, UTF-8, `.trim()`-applied, mutually exclusive with the inline form); `--generate`, `--select` optional with int validation; `--name` optional slug (`[A-Za-z0-9._-]+`); `--out` optional dir (relative or absolute); `--debug` optional flag (preserves tmp on success). `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number, invalid slug, mutually-exclusive conflict, missing/empty/unreadable prompt file) prints to stderr and exits 2.
 - **Output contract:** JSON on stdout via `emit()`. Always the same shape. Exit code 0 iff `ok`.
 - **Error model:** all failure paths route through `emit(..., 1)` with a populated `error` or non-empty `warnings`. No partial JSON, no half-written stdout.
 - **Path style:** prompts to codex use posix-slash absolute paths (`replace(/\\/g,'/')`); fs operations use `path.join` natively.

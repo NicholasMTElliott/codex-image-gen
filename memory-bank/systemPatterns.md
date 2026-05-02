@@ -5,7 +5,7 @@ Single-process Node ESM script. No daemon, no state, no IPC beyond the spawned c
 
 ```
 caller (Claude Code / shell)
-   │  --style / --subject / --generate / --select / --name / --out
+   │  --style[-file] / --subject[-file] / --generate / --select / --name / --out
    ▼
 codex-image-gen.mjs
    │  spawn('codex', ['exec','--full-auto','--skip-git-repo-check','--cd', tmpOutDir]),
@@ -54,7 +54,7 @@ JSON to stdout (selected.paths in persistent dir, generated.paths [] after clean
 4. Patch `permissions.allow` in `~/.claude/settings.json` (idempotent; falls back to printing the rule if JSON is malformed).
 
 ### Generation
-1. Parse args; validate `select ≤ generate`, both positive integers; `--name` slug (if present) matches `[A-Za-z0-9._-]+`. `--debug` parsed as flag.
+1. Parse args; resolve `--style-file`/`--subject-file` (mutually exclusive with their inline counterparts; UTF-8 read, `.trim()` to strip trailing newline, empty-after-trim is rejected); validate `select ≤ generate`, both positive integers; `--name` slug (if present) matches `[A-Za-z0-9._-]+`. `--debug` parsed as flag.
 2. Make `<cwd>/.codex-image-gen-tmp/<timestamp>-<pid>/output/` (the per-session tmp work dir).
 3. Build prompt: instructs codex to write exactly N PNGs into that absolute dir, and (if `select<generate`) copy M chosen files into `selected/`. Uses posix-slash absolute paths.
 4. Spawn `codex exec --full-auto --skip-git-repo-check --cd <tmpOutputDir>` with `OPENAI_API_KEY` deleted from env. Pipe prompt via stdin.

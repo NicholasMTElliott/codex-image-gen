@@ -98,8 +98,10 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
 
 ### Parameters
 
-- `--style` (required, free text). Visual treatment description.
-- `--subject` (required, free text). What to depict, including framing and background notes.
+- `--style` (required if `--style-file` not given, free text). Visual treatment description.
+- `--style-file` (alternative to `--style`). Path to a UTF-8 text file containing the style prompt. Useful for long multi-line briefs that don't shell-escape cleanly. Mutually exclusive with `--style`. Leading/trailing whitespace trimmed; internal newlines preserved.
+- `--subject` (required if `--subject-file` not given, free text). What to depict, including framing and background notes.
+- `--subject-file` (alternative to `--subject`). Path to a UTF-8 text file containing the subject prompt. Same trimming rules as `--style-file`.
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run that would overwrite, the tool falls back to a sessionId-disambiguated name and emits a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
