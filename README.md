@@ -94,7 +94,7 @@ node "%USERPROFILE%\.codex-image-gen\codex-image-gen.mjs" ^
   --select 2
 ```
 
-Output is JSON on stdout. Selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
+Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide; pass `--out` to redirect into a different directory and/or `--name` to control the filename. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
 
 ### Parameters
 
@@ -102,6 +102,8 @@ Output is JSON on stdout. Selected images are copied to `<cwd>/codex-image-gen-o
 - `--subject` (required, free text). What to depict, including framing and background notes.
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
+- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run that would overwrite, the tool falls back to a sessionId-disambiguated name and emits a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
+- `--out` (optional). Persistent output directory (relative to cwd, or absolute). Default `./codex-image-gen-output/`. Combine with `--name` to drop selected images straight into a project's asset folder.
 - `--debug` (optional flag). Keep the per-session tmp work dir after a successful run. Default behavior cleans it up to minimize disk impact. Failed runs always preserve tmp regardless of this flag.
 
 ### Output JSON shape
@@ -191,12 +193,12 @@ If a manual run fails or the skill isn't being invoked, work down this list:
 
 ## Caller responsibilities
 
-The tool copies the **selected** images into `./codex-image-gen-output/` with sessionId-prefixed filenames (e.g. `1716123456789-12345-variant-2.png`). The interim per-session work dir under `./.codex-image-gen-tmp/<sessionId>/` is cleaned up on success unless `--debug` is passed.
+By default, the tool copies the **selected** images into `./codex-image-gen-output/` with sessionId-prefixed filenames (e.g. `1716123456789-12345-variant-2.png`). Use `--name` to give the file a known slug (e.g. `kharr-emblem.png`) and/or `--out` to redirect to a different directory (e.g. `--out assets/icons`). The interim per-session work dir under `./.codex-image-gen-tmp/<sessionId>/` is cleaned up on success unless `--debug` is passed.
 
 After invocation:
 1. Inspect the image(s) — use `selected.paths` from the JSON output.
-2. Move desired files out of `./codex-image-gen-output/` to your final destination (or rename them in place to drop the sessionId prefix).
-3. Add both `codex-image-gen-output/` and `.codex-image-gen-tmp/` to your project's `.gitignore` so generated artifacts don't get committed.
+2. If you didn't redirect with `--out`, move desired files out of `./codex-image-gen-output/` to your final destination (or rename them in place to drop the sessionId prefix — `--name` avoids that step on the next run).
+3. Add the output dir and `.codex-image-gen-tmp/` to your project's `.gitignore` so generated artifacts don't get committed.
 
 If a run fails (`ok: false`) the tmp work dir is preserved so you can investigate. Pass `--debug` to keep tmp on a successful run too. It's safe to delete `./codex-image-gen-tmp/` and `./codex-image-gen-output/` whenever you've moved the keepers — there's no state in either dir the tool needs across runs.
 

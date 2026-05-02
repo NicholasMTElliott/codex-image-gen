@@ -35,3 +35,10 @@ test('5. --select greater than --generate is rejected', async () => {
   assert.equal(r.code, 2);
   assert.match(r.stderr, /--select cannot exceed --generate/);
 });
+
+test('5a. --name with disallowed chars is rejected', async () => {
+  // Path traversal / shell-meta surprises blocked at the boundary.
+  const r = await runTool(['--style', 's', '--subject', 'x', '--name', '../evil']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--name must contain only/);
+});

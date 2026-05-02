@@ -37,12 +37,12 @@ Installer paths:
 - Optional: Claude Code (only needed for the auto-invoked skill).
 
 ## Tooling patterns
-- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation; `--debug` optional flag (preserves tmp on success). `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number) prints to stderr and exits 2.
+- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation; `--name` optional slug (`[A-Za-z0-9._-]+`); `--out` optional dir (relative or absolute); `--debug` optional flag (preserves tmp on success). `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number, invalid slug) prints to stderr and exits 2.
 - **Output contract:** JSON on stdout via `emit()`. Always the same shape. Exit code 0 iff `ok`.
 - **Error model:** all failure paths route through `emit(..., 1)` with a populated `error` or non-empty `warnings`. No partial JSON, no half-written stdout.
 - **Path style:** prompts to codex use posix-slash absolute paths (`replace(/\\/g,'/')`); fs operations use `path.join` natively.
 - **Image discovery:** `listImages(dir)` filters by `\.(png|jpe?g|webp)$/i`, sorts by mtime ascending (filename tiebreaker so equal-mtime files sort deterministically — matters under FAT32's 2s resolution and on fast in-same-ms generation). Fallback to `~/.codex/generated_images/` only if requested dir is empty (with warning).
-- **Session dir naming:** `<timestamp>-<pid>` under `<cwd>/.codex-image-gen-tmp/` (interim) and copied finals into `<cwd>/codex-image-gen-output/` with the same `<sessionId>-<basename>` prefix (persistent). Caller adds both dir names to their `.gitignore` (this repo already does).
+- **Session dir naming:** `<timestamp>-<pid>` under `<cwd>/.codex-image-gen-tmp/` (interim). Copied finals go to `resolve(cwd, --out || 'codex-image-gen-output')` (persistent). Default filename: `<sessionId>-<basename>`. With `--name`: `<slug><ext>` for select=1, `<slug>-<n><ext>` for select>1; collisions (existing file at preferred dest) fall back to `<slug>-<sessionId>[.|-<n>]<ext>` with a warning. Caller adds the persistent dir + `.codex-image-gen-tmp/` to their `.gitignore` (this repo's .gitignore covers the defaults).
 - **Cleanup contract:** on `ok && !--debug`, the session tmp dir is removed via `rmSync(sessionDir, {recursive:true, force:true})`. Failures (`ok===false`) preserve tmp unconditionally for debugging. Cleanup errors emit a warning but do not flip `ok` to false.
 - **Settings patcher (`install.mjs`):** idempotent — re-runs are no-ops; tolerates missing/malformed settings.json by printing the rule instead of crashing.
 

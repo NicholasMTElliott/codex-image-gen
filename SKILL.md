@@ -29,6 +29,8 @@ node <<SCRIPT_PATH>> \
   --subject "<subject prompt — what to depict>" \
   [--generate N] \
   [--select M] \
+  [--name SLUG] \
+  [--out DIR] \
   [--debug]
 ```
 
@@ -38,6 +40,8 @@ node <<SCRIPT_PATH>> \
 - `--subject` (required, free text). Describes what to depict, including any composition / framing / background notes. Be specific. Example: `"two metal swords crossed in an X, transparent background, centered, no scene"`. If you want transparency, say so — codex's default is to use chroma-key removal.
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
+- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run that would overwrite an existing file, the tool falls back to a sessionId-disambiguated name and emits a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.
+- `--out` (optional). Override the persistent output directory. Default `./codex-image-gen-output/` (relative to caller cwd). Pass an absolute path or a path relative to cwd to drop selected images straight into the project's asset folder, e.g. `--out assets/icons` or `--out /abs/path/to/assets`. The directory is created if missing.
 - `--debug` (optional flag). Keep the per-session tmp work dir on success. Default cleans it up to minimize disk impact. Failures always preserve tmp regardless. Only set this when you intend to inspect interim files.
 
 ### Output
@@ -65,15 +69,15 @@ JSON on stdout. Always inspect the result.
 
 `ok` is true only when `generated.count == --generate` AND `selected.count == --select`. If `ok` is false, inspect `warnings` and `error`.
 
-`selected.paths` is the canonical "use these" list and always points into the persistent output dir at `<cwd>/codex-image-gen-output/`. Filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
+`selected.paths` is the canonical "use these" list and always points into the persistent output dir (default `<cwd>/codex-image-gen-output/`, or whatever `--out` was set to). By default filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide; pass `--name` to control the filename instead. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
 
 ## After invoking
 
-The tool copies selected files into `./codex-image-gen-output/` (relative to caller cwd) and removes the per-session tmp work dir on success. It does NOT move files to their final destination — that's your responsibility. After the tool returns:
+The tool copies selected files into the persistent output dir (default `./codex-image-gen-output/`, or `--out`) and removes the per-session tmp work dir on success. It does NOT move files to their final destination unless you point `--out` straight at the asset folder. After the tool returns:
 
 1. Inspect the image(s) (Read the PNG path from `selected.paths` to view it).
-2. If the result looks right, copy/move from `selected.paths` to the project's permanent asset directory. You'll typically want to drop the sessionId prefix from the filename when you do.
-3. Add `codex-image-gen-output/` and `.codex-image-gen-tmp/` to the project's `.gitignore` if not already there.
+2. If the result looks right and you didn't use `--out` to drop straight into the asset folder, copy/move from `selected.paths` to the project's permanent asset directory. Drop the sessionId prefix from the filename when you do (or use `--name` next time so there's no prefix to strip).
+3. Add the output dir and `.codex-image-gen-tmp/` to the project's `.gitignore` if not already there.
 
 ## Cost & timing awareness
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { readFakeCodexMeta, runTool } from './helpers.mjs';
+import { mktempDir, readFakeCodexMeta, runTool } from './helpers.mjs';
 
 test('6. single-image happy path: ok=true, 1 selected, paths absolute and in persistent output dir', async () => {
   const r = await runTool(['--style', 'studio photo', '--subject', 'an apple']);
@@ -193,4 +193,78 @@ test('29. persistent output dir is created at <cwd>/codex-image-gen-output/', as
   const expected = join(r.cwd, 'codex-image-gen-output');
   assert.equal(r.json.outputDir, expected);
   assert.ok(existsSync(expected), 'persistent output dir should exist after run');
+});
+
+test('30. --name with --select 1 produces <slug>.png (no sessionId prefix)', async () => {
+  const r = await runTool(['--style', 's', '--subject', 'x', '--name', 'kharr-emblem']);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.selected.paths.length, 1);
+  const p = r.json.selected.paths[0];
+  assert.equal(p, join(r.json.outputDir, 'kharr-emblem.png'));
+  assert.ok(existsSync(p));
+});
+
+test('31. --name with --select 2+ produces numbered <slug>-N.png', async () => {
+  const r = await runTool([
+    '--style', 's', '--subject', 'x',
+    '--generate', '4', '--select', '2',
+    '--name', 'asset',
+  ]);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.selected.paths.length, 2);
+  assert.deepEqual(
+    r.json.selected.paths.map((p) => p.split(/[\\/]/).pop()).sort(),
+    ['asset-1.png', 'asset-2.png'],
+  );
+  for (const p of r.json.selected.paths) assert.ok(existsSync(p));
+});
+
+test('32. --name re-run collision falls back to sessionId-disambiguated name + warning', async () => {
+  const r1 = await runTool(['--style', 's', '--subject', 'x', '--name', 'thing']);
+  assert.equal(r1.json.ok, true);
+  // Re-run in the same cwd with the same --name → preferred path exists
+  const r2 = await runTool(['--style', 's', '--subject', 'x', '--name', 'thing'], { cwd: r1.cwd });
+  assert.equal(r2.json.ok, true);
+  // Original keeper untouched
+  assert.equal(r1.json.selected.paths[0], join(r1.json.outputDir, 'thing.png'));
+  assert.ok(existsSync(r1.json.selected.paths[0]));
+  // Re-run wrote a disambiguated name, NOT 'thing.png'
+  const r2Path = r2.json.selected.paths[0];
+  assert.notEqual(r2Path, join(r2.json.outputDir, 'thing.png'));
+  assert.match(r2Path, /thing-\d+-\d+\.png$/);
+  assert.ok(existsSync(r2Path));
+  // And a warning about it
+  assert.ok(
+    r2.json.warnings.some((w) => /thing\.png already exists/.test(w)),
+    `expected collision warning, got: ${JSON.stringify(r2.json.warnings)}`,
+  );
+});
+
+test('33. --out with relative path resolves against cwd and is used as outputDir', async () => {
+  const r = await runTool(['--style', 's', '--subject', 'x', '--out', 'assets/icons']);
+  assert.equal(r.json.ok, true);
+  const expected = join(r.cwd, 'assets', 'icons');
+  assert.equal(r.json.outputDir, expected);
+  assert.ok(existsSync(expected), '--out dir should be created');
+  assert.ok(r.json.selected.paths[0].startsWith(expected));
+});
+
+test('34. --out with absolute path is honored verbatim', async () => {
+  const absOut = mktempDir('cig-out-');
+  const r = await runTool(['--style', 's', '--subject', 'x', '--out', absOut]);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.outputDir, absOut);
+  assert.ok(r.json.selected.paths[0].startsWith(absOut));
+  assert.ok(existsSync(r.json.selected.paths[0]));
+});
+
+test('35. --name + --out combine: file lives at <out>/<slug>.png', async () => {
+  const r = await runTool([
+    '--style', 's', '--subject', 'x',
+    '--out', 'assets',
+    '--name', 'logo',
+  ]);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.selected.paths[0], join(r.cwd, 'assets', 'logo.png'));
+  assert.ok(existsSync(r.json.selected.paths[0]));
 });

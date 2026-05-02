@@ -33,7 +33,7 @@
 import { spawn } from 'node:child_process';
 import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, extname, join, resolve } from 'node:path';
 
 // Silence DEP0190 (spawn shell:true with args). shell:true is required on
 // Windows because post-CVE-2024-27980 Node refuses to spawn .cmd shims any
@@ -52,6 +52,8 @@ function parseArgs(argv) {
   let generate = 1;
   let select = 1;
   let debug = false;
+  let name = '';
+  let out = '';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -60,6 +62,8 @@ function parseArgs(argv) {
     else if (arg === '--subject') { subject = next ?? ''; i++; }
     else if (arg === '--generate') { generate = parseInt(next ?? '', 10); i++; }
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
+    else if (arg === '--name') { name = next ?? ''; i++; }
+    else if (arg === '--out') { out = next ?? ''; i++; }
     else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
   }
@@ -77,13 +81,19 @@ function parseArgs(argv) {
     process.stderr.write('error: --select cannot exceed --generate\n');
     process.exit(2);
   }
+  if (name && !/^[A-Za-z0-9._-]+$/.test(name)) {
+    // Restrict to filename-safe chars to block path traversal and shell-meta
+    // surprises. Users who want arbitrary paths can use --out instead.
+    process.stderr.write('error: --name must contain only letters, digits, ., _, -\n');
+    process.exit(2);
+  }
 
-  return { style, subject, generate, select, debug };
+  return { style, subject, generate, select, debug, name, out };
 }
 
 function printUsage(stream = process.stderr) {
   stream.write(
-    `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M] [--debug]
+    `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M] [--name SLUG] [--out DIR] [--debug]
 
 Required:
   --style      Style prompt (free text — describes visual treatment)
@@ -94,14 +104,22 @@ Optional:
   --select     Number of variants to keep (default: 1; must be <= generate)
                When select < generate, codex reviews the variants and picks
                the strongest. When select == generate, no review step runs.
+  --name       Output filename slug. With --name kharr-emblem and select=1,
+               the persistent file is "kharr-emblem.png"; with select>1, it's
+               "kharr-emblem-1.png", "kharr-emblem-2.png", ... If a target
+               filename already exists, falls back to a sessionId-suffixed
+               name and emits a warning. Allowed chars: letters, digits, ., _,
+               -. Without --name, files keep the default sessionId prefix.
+  --out        Persistent output directory (relative to cwd, or absolute).
+               Default: ./codex-image-gen-output/. Created if missing.
   --debug      Keep the per-session tmp dir after a successful run. By
                default tmp is cleaned up on success to minimize disk impact;
                failed runs always keep tmp for debugging regardless.
 
-Output: selected images are copied to a persistent flat directory under the
-caller's cwd:
-  <cwd>/codex-image-gen-output/<sessionId>-<filename>.png
-The sessionId prefix prevents collisions across consecutive runs.
+Output: selected images are copied to the persistent output directory:
+  <outDir>/<sessionId>-<filename>.png       (default — sessionId prefix
+                                             prevents cross-run collisions)
+  <outDir>/<slug>[-<n>].png                 (with --name)
 
 JSON on stdout reports both the persistent paths (selected.paths) and the
 output dir. The interim per-session work dir lives at
@@ -109,8 +127,7 @@ output dir. The interim per-session work dir lives at
 and is removed automatically on a successful run unless --debug is passed
 (or the run failed — failures preserve tmp so the user can investigate).
 
-Add "codex-image-gen-output/" and ".codex-image-gen-tmp/" to your project's
-.gitignore.
+Add the output dir and ".codex-image-gen-tmp/" to your project's .gitignore.
 `,
   );
 }
@@ -209,10 +226,10 @@ async function main() {
   const tmpOutputDir = join(sessionDir, 'output');
   mkdirSync(tmpOutputDir, { recursive: true });
 
-  // Persistent per-cwd output dir. Selected images are copied here so the
-  // tmp session dir can be cleaned up. Filenames are sessionId-prefixed so
-  // consecutive runs don't clobber each other.
-  const persistentOutputDir = resolve(cwd, 'codex-image-gen-output');
+  // Persistent output dir for selected images. Default lives under the caller's
+  // cwd; --out lets the caller redirect (e.g. straight into a repo's asset
+  // folder). resolve() handles both relative and absolute paths.
+  const persistentOutputDir = resolve(cwd, args.out || 'codex-image-gen-output');
 
   const env = { ...process.env };
   delete env.OPENAI_API_KEY;
@@ -276,14 +293,37 @@ async function main() {
     selectedTmpPaths = generatedPaths.slice(0, args.select);
   }
 
-  // Copy selected files to the persistent output dir with sessionId-prefixed
-  // filenames (collision-safe across runs). Best-effort: a copy failure is
-  // recorded as a warning and reflected in `ok` via the count check below.
+  // Copy selected files to the persistent output dir. Filename strategy:
+  //   - default: sessionId-prefixed (collision-safe across runs).
+  //   - --name <slug>: <slug><ext> when select=1, otherwise <slug>-<n><ext>.
+  //     On collision (re-run with same --name), fall back to a sessionId-
+  //     disambiguated name and warn — caller's previous keepers stay intact.
+  // Best-effort: a copy failure is recorded as a warning and reflected in
+  // `ok` via the count check below.
   const persistentSelectedPaths = [];
   if (selectedTmpPaths.length > 0) {
     mkdirSync(persistentOutputDir, { recursive: true });
-    for (const src of selectedTmpPaths) {
-      const dest = join(persistentOutputDir, `${sessionId}-${basename(src)}`);
+    for (let i = 0; i < selectedTmpPaths.length; i++) {
+      const src = selectedTmpPaths[i];
+      let dest;
+      if (args.name) {
+        const ext = extname(src);
+        const preferred = args.select === 1
+          ? `${args.name}${ext}`
+          : `${args.name}-${i + 1}${ext}`;
+        const preferredPath = join(persistentOutputDir, preferred);
+        if (existsSync(preferredPath)) {
+          const fallback = args.select === 1
+            ? `${args.name}-${sessionId}${ext}`
+            : `${args.name}-${sessionId}-${i + 1}${ext}`;
+          dest = join(persistentOutputDir, fallback);
+          warnings.push(`destination ${preferred} already exists; wrote ${fallback} instead`);
+        } else {
+          dest = preferredPath;
+        }
+      } else {
+        dest = join(persistentOutputDir, `${sessionId}-${basename(src)}`);
+      }
       try {
         copyFileSync(src, dest);
         persistentSelectedPaths.push(dest);
