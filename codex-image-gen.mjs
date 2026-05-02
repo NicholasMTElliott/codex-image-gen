@@ -151,7 +151,12 @@ function runCodex(prompt, env, cwd) {
     // suppress it; args here are static flags + a path with no shell metachars).
     // Prompt itself is piped via stdin to dodge shell-arg-concat splitting.
     const isWin = process.platform === 'win32';
-    const child = spawn('codex', ['exec', '--full-auto', '--cd', cwd], {
+    // --skip-git-repo-check: our --cd target is always a fresh per-session
+    // tmp dir (not a git repo), so codex's trusted-dir guard would refuse
+    // every run. Safe here because our prompt only asks codex to generate
+    // images and copy them into the same dir we created — no destructive
+    // operations elsewhere.
+    const child = spawn('codex', ['exec', '--full-auto', '--skip-git-repo-check', '--cd', cwd], {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: isWin,
