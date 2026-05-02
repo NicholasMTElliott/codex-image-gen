@@ -30,6 +30,8 @@ Claude Code can't generate images directly. The `codex` CLI can — and when aut
 ## Install
 
 ```bash
+git clone https://github.com/NicholasMTElliott/codex-image-gen.git
+cd codex-image-gen
 node install.mjs
 ```
 
@@ -37,7 +39,7 @@ This:
 1. Verifies `node` and `codex` are on `PATH`.
 2. Copies `codex-image-gen.mjs` and `README.md` to `~/.codex-image-gen/`.
 3. Renders `SKILL.md` with the absolute install path baked in and writes it to `~/.claude/skills/codex-image-gen/SKILL.md`.
-4. Prints the `Bash(...)` allow rule to add to `~/.claude/settings.json` for prompt-free invocation.
+4. Auto-patches the `permissions.allow` array in `~/.claude/settings.json` with the `Bash(...)` rule that pre-approves the tool for Claude Code (idempotent — safe to re-run; falls back to printing the rule if `settings.json` is malformed).
 
 To remove:
 
@@ -111,4 +113,8 @@ After invocation:
 
 ## License
 
-Use it however you like. No warranty.
+MIT — see [LICENSE](LICENSE).
+
+## Contributing
+
+Issues and PRs welcome at https://github.com/NicholasMTElliott/codex-image-gen. The tool is small (single ~250-line `.mjs` file) and intentionally zero-dep; please preserve both properties when proposing changes.
