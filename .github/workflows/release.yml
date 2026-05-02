@@ -1,0 +1,73 @@
+name: Release
+
+# Triggered by tags of the form `release/v0.0.0`. Runs the full test matrix
+# first; only publishes a GitHub Release with the user-facing zip if every
+# matrix job passes.
+on:
+  push:
+    tags:
+      - 'release/v*'
+
+jobs:
+  test:
+    name: Test ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  release:
+    name: Build and publish release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          # Tag is 'release/vX.Y.Z' (or '...-beta', etc).
+          TAG_VERSION="${GITHUB_REF_NAME#release/}"   # vX.Y.Z
+          DISPLAY_VERSION="${TAG_VERSION#v}"          # X.Y.Z
+          echo "tag_version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "display_version=$DISPLAY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${DISPLAY_VERSION} (tag ${GITHUB_REF_NAME})"
+
+      - name: Build release zip
+        id: zip
+        shell: bash
+        run: |
+          mkdir -p dist
+          ZIP_NAME="codex-image-gen-${{ steps.version.outputs.display_version }}.zip"
+          # Only the user-facing files. Tests, CI config, .gitignore, and
+          # package.json are intentionally excluded — release-zip users don't
+          # need them.
+          zip "dist/$ZIP_NAME" \
+            codex-image-gen.mjs \
+            install.mjs \
+            SKILL.md \
+            README.md \
+            LICENSE
+          echo "zip_path=dist/$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          unzip -l "dist/$ZIP_NAME"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "codex-image-gen ${{ steps.version.outputs.display_version }}" \
+            --generate-notes \
+            "${{ steps.zip.outputs.zip_path }}"

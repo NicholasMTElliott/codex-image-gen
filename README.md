@@ -30,13 +30,27 @@ Claude Code can't generate images directly. The `codex` CLI can — and when aut
 
 ## Install
 
+Pick whichever path you prefer — both end at `node install.mjs`.
+
+### Option A — Download a release zip (recommended for one-off use)
+
+1. Grab the latest `codex-image-gen-*.zip` from [Releases](https://github.com/NicholasMTElliott/codex-image-gen/releases/latest).
+2. Extract it anywhere — the extraction location doesn't matter; `install.mjs` copies what it needs into `~/.codex-image-gen/`.
+3. From inside the extracted directory:
+   ```bash
+   node install.mjs
+   ```
+
+### Option B — Clone the repo (recommended if you want `git pull` updates or plan to contribute)
+
 ```bash
 git clone https://github.com/NicholasMTElliott/codex-image-gen.git
 cd codex-image-gen
 node install.mjs
 ```
 
-This:
+### What the installer does
+
 1. Verifies `node` and `codex` are on `PATH`.
 2. Copies `codex-image-gen.mjs` and `README.md` to `~/.codex-image-gen/`.
 3. Renders `SKILL.md` with the absolute install path baked in and writes it to `~/.claude/skills/codex-image-gen/SKILL.md`.
@@ -96,13 +110,21 @@ Claude knows when **not** to use the skill too — for SVG/vector output, ASCII 
 
 ## Updating
 
+If you installed via **release zip**:
+
+1. Download the latest `codex-image-gen-*.zip` from [Releases](https://github.com/NicholasMTElliott/codex-image-gen/releases/latest).
+2. Extract over your existing extracted directory (or anywhere — location doesn't matter).
+3. Re-run `node install.mjs` from inside the new extracted dir.
+
+If you installed via **`git clone`**:
+
 ```bash
 cd codex-image-gen
 git pull
 node install.mjs
 ```
 
-The installer is idempotent: re-running overwrites the installed copy in `~/.codex-image-gen/`, re-renders `SKILL.md`, and detects the existing allow rule in `~/.claude/settings.json` without duplicating it.
+Either way, the installer is idempotent: re-running overwrites the installed copy in `~/.codex-image-gen/`, re-renders `SKILL.md`, and detects the existing allow rule in `~/.claude/settings.json` without duplicating it.
 
 ## Troubleshooting
 
