@@ -9,8 +9,30 @@ on:
       - 'release/v*'
 
 jobs:
+  check:
+    name: Check tag matches package.json version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify versions match
+        shell: bash
+        run: |
+          # Tag is 'release/vX.Y.Z'; strip the prefix and the leading 'v'.
+          TAG_VERSION="${GITHUB_REF_NAME#release/}"
+          DISPLAY_VERSION="${TAG_VERSION#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "tag (display)   : $DISPLAY_VERSION"
+          echo "package.json    : $PKG_VERSION"
+          if [ "$DISPLAY_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($DISPLAY_VERSION) does not match package.json version ($PKG_VERSION)."
+            echo "::error::Fix: bump package.json to $DISPLAY_VERSION on master, then re-tag the new commit. (Delete the bad tag locally and remotely first: git tag -d release/v$DISPLAY_VERSION && git push origin :refs/tags/release/v$DISPLAY_VERSION)"
+            exit 1
+          fi
+          echo "OK — versions match ($DISPLAY_VERSION)"
+
   test:
     name: Test ${{ matrix.os }} / Node ${{ matrix.node }}
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: true
@@ -26,7 +48,7 @@ jobs:
 
   release:
     name: Build and publish release
-    needs: test
+    needs: [check, test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
