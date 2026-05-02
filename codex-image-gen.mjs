@@ -12,7 +12,13 @@
  *     --subject "Kharr Dominion faction emblem, predator silhouette, deep red" \
  *     --generate 4 --select 2
  *
- * Output: JSON on stdout with absolute paths to generated and selected images.
+ * Output: selected images are copied to <cwd>/codex-image-gen-output/ with
+ * sessionId-prefixed filenames so consecutive runs don't collide. JSON on
+ * stdout reports paths + the persistent output dir + the tmp workdir.
+ *
+ * Tmp session work happens under <cwd>/.codex-image-gen-tmp/<sessionId>/ and
+ * is cleaned up on successful completion to minimize disk churn. Pass --debug
+ * to keep tmp on success; failures always preserve tmp regardless.
  *
  * Subscription billing requires OPENAI_API_KEY to be UNSET in the spawned env
  * — if present, codex silently switches to API token billing. We deliberately
@@ -25,9 +31,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 // Silence DEP0190 (spawn shell:true with args). shell:true is required on
 // Windows because post-CVE-2024-27980 Node refuses to spawn .cmd shims any
@@ -45,6 +51,7 @@ function parseArgs(argv) {
   let subject = '';
   let generate = 1;
   let select = 1;
+  let debug = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -53,6 +60,7 @@ function parseArgs(argv) {
     else if (arg === '--subject') { subject = next ?? ''; i++; }
     else if (arg === '--generate') { generate = parseInt(next ?? '', 10); i++; }
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
+    else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
   }
 
@@ -70,12 +78,12 @@ function parseArgs(argv) {
     process.exit(2);
   }
 
-  return { style, subject, generate, select };
+  return { style, subject, generate, select, debug };
 }
 
 function printUsage(stream = process.stderr) {
   stream.write(
-    `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M]
+    `Usage: node codex-image-gen.mjs --style "<text>" --subject "<text>" [--generate N] [--select M] [--debug]
 
 Required:
   --style      Style prompt (free text — describes visual treatment)
@@ -86,14 +94,23 @@ Optional:
   --select     Number of variants to keep (default: 1; must be <= generate)
                When select < generate, codex reviews the variants and picks
                the strongest. When select == generate, no review step runs.
+  --debug      Keep the per-session tmp dir after a successful run. By
+               default tmp is cleaned up on success to minimize disk impact;
+               failed runs always keep tmp for debugging regardless.
 
-Output: JSON on stdout. A new session directory is created under
-  <cwd>/.codex-image-gen-tmp/<sessionId>/output/
-Selected images live under
-  <cwd>/.codex-image-gen-tmp/<sessionId>/output/selected/  (only if select < generate)
+Output: selected images are copied to a persistent flat directory under the
+caller's cwd:
+  <cwd>/codex-image-gen-output/<sessionId>-<filename>.png
+The sessionId prefix prevents collisions across consecutive runs.
 
-The caller is responsible for moving final images to their permanent home.
-Add ".codex-image-gen-tmp/" to your project's .gitignore.
+JSON on stdout reports both the persistent paths (selected.paths) and the
+output dir. The interim per-session work dir lives at
+  <cwd>/.codex-image-gen-tmp/<sessionId>/
+and is removed automatically on a successful run unless --debug is passed
+(or the run failed — failures preserve tmp so the user can investigate).
+
+Add "codex-image-gen-output/" and ".codex-image-gen-tmp/" to your project's
+.gitignore.
 `,
   );
 }
@@ -189,22 +206,28 @@ async function main() {
 
   const sessionId = `${Date.now()}-${process.pid}`;
   const sessionDir = join(tmpRoot, sessionId);
-  const outputDir = join(sessionDir, 'output');
-  mkdirSync(outputDir, { recursive: true });
+  const tmpOutputDir = join(sessionDir, 'output');
+  mkdirSync(tmpOutputDir, { recursive: true });
+
+  // Persistent per-cwd output dir. Selected images are copied here so the
+  // tmp session dir can be cleaned up. Filenames are sessionId-prefixed so
+  // consecutive runs don't clobber each other.
+  const persistentOutputDir = resolve(cwd, 'codex-image-gen-output');
 
   const env = { ...process.env };
   delete env.OPENAI_API_KEY;
 
-  const prompt = buildPrompt(args, outputDir);
+  const prompt = buildPrompt(args, tmpOutputDir);
 
   let runResult;
   try {
-    runResult = await runCodex(prompt, env, outputDir);
+    runResult = await runCodex(prompt, env, tmpOutputDir);
   } catch (e) {
     return emit({
       ok: false,
       generated: { count: 0, paths: [] },
       selected: { count: 0, paths: [], expected: args.select },
+      outputDir: persistentOutputDir,
       workdir: sessionDir,
       warnings,
       error: `failed to spawn codex: ${e.message}`,
@@ -217,6 +240,7 @@ async function main() {
       ok: false,
       generated: { count: 0, paths: [] },
       selected: { count: 0, paths: [], expected: args.select },
+      outputDir: persistentOutputDir,
       workdir: sessionDir,
       warnings,
       error: `codex exited with code ${runResult.code}. stderr tail: ${runResult.stderr.slice(-500).trim()}`,
@@ -224,7 +248,7 @@ async function main() {
     }, 1);
   }
 
-  let generatedPaths = listImages(outputDir);
+  let generatedPaths = listImages(tmpOutputDir);
   if (generatedPaths.length === 0) {
     const fallback = join(homedir(), '.codex', 'generated_images');
     const fallbackImgs = listImages(fallback);
@@ -237,29 +261,69 @@ async function main() {
     warnings.push(`expected ${args.generate} generated image(s), found ${generatedPaths.length}`);
   }
 
-  let selectedPaths;
+  let selectedTmpPaths;
   const needsSelection = args.select < args.generate;
   if (needsSelection) {
-    const selectedDir = join(outputDir, 'selected');
-    selectedPaths = listImages(selectedDir);
-    if (selectedPaths.length === 0) {
+    const selectedDir = join(tmpOutputDir, 'selected');
+    selectedTmpPaths = listImages(selectedDir);
+    if (selectedTmpPaths.length === 0) {
       warnings.push(`no "selected/" subfolder produced by codex; falling back to first ${args.select} generated image(s) by mtime`);
-      selectedPaths = generatedPaths.slice(0, args.select);
-    } else if (selectedPaths.length !== args.select) {
-      warnings.push(`expected ${args.select} selected image(s), found ${selectedPaths.length} in selected/`);
+      selectedTmpPaths = generatedPaths.slice(0, args.select);
+    } else if (selectedTmpPaths.length !== args.select) {
+      warnings.push(`expected ${args.select} selected image(s), found ${selectedTmpPaths.length} in selected/`);
     }
   } else {
-    selectedPaths = generatedPaths.slice(0, args.select);
+    selectedTmpPaths = generatedPaths.slice(0, args.select);
+  }
+
+  // Copy selected files to the persistent output dir with sessionId-prefixed
+  // filenames (collision-safe across runs). Best-effort: a copy failure is
+  // recorded as a warning and reflected in `ok` via the count check below.
+  const persistentSelectedPaths = [];
+  if (selectedTmpPaths.length > 0) {
+    mkdirSync(persistentOutputDir, { recursive: true });
+    for (const src of selectedTmpPaths) {
+      const dest = join(persistentOutputDir, `${sessionId}-${basename(src)}`);
+      try {
+        copyFileSync(src, dest);
+        persistentSelectedPaths.push(dest);
+      } catch (e) {
+        warnings.push(`failed to copy ${src} → ${dest}: ${e.message}`);
+      }
+    }
   }
 
   const ok =
     generatedPaths.length === args.generate &&
-    selectedPaths.length === args.select;
+    persistentSelectedPaths.length === args.select;
+
+  // Cleanup the tmp session dir on success unless --debug. Failures keep tmp
+  // so the user can investigate. Best-effort: a failed cleanup is a warning,
+  // not a failure of the run itself.
+  const cleanedUp = ok && !args.debug;
+  if (cleanedUp) {
+    try {
+      rmSync(sessionDir, { recursive: true, force: true });
+    } catch (e) {
+      warnings.push(`failed to clean up tmp session dir ${sessionDir}: ${e.message}`);
+    }
+  }
 
   emit({
     ok,
-    generated: { count: generatedPaths.length, paths: generatedPaths },
-    selected: { count: selectedPaths.length, paths: selectedPaths, expected: args.select },
+    generated: {
+      count: generatedPaths.length,
+      // After cleanup the tmp paths are stale; surface [] so callers don't
+      // get broken paths. With --debug or on partial failure, surface the
+      // tmp paths so they're still inspectable.
+      paths: cleanedUp ? [] : generatedPaths,
+    },
+    selected: {
+      count: persistentSelectedPaths.length,
+      paths: persistentSelectedPaths,
+      expected: args.select,
+    },
+    outputDir: persistentOutputDir,
     workdir: sessionDir,
     warnings,
     durationMs: Date.now() - start,

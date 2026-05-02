@@ -9,7 +9,7 @@
 
 ## Constraints
 - **Zero npm deps.** Adding any is a non-starter without explicit approval.
-- **Single-file runtime.** The wrapper must stay one ~300-line `.mjs`.
+- **Single-file runtime.** The wrapper must stay one ~350-line `.mjs`.
 - **Env hygiene.**
   - DELETE `OPENAI_API_KEY` from the spawned env (forces ChatGPT-subscription billing).
   - DO NOT override `CODEX_HOME` (codex auth lives there).
@@ -37,12 +37,13 @@ Installer paths:
 - Optional: Claude Code (only needed for the auto-invoked skill).
 
 ## Tooling patterns
-- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation. `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number) prints to stderr and exits 2.
+- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation; `--debug` optional flag (preserves tmp on success). `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number) prints to stderr and exits 2.
 - **Output contract:** JSON on stdout via `emit()`. Always the same shape. Exit code 0 iff `ok`.
 - **Error model:** all failure paths route through `emit(..., 1)` with a populated `error` or non-empty `warnings`. No partial JSON, no half-written stdout.
 - **Path style:** prompts to codex use posix-slash absolute paths (`replace(/\\/g,'/')`); fs operations use `path.join` natively.
-- **Image discovery:** `listImages(dir)` filters by `\.(png|jpe?g|webp)$/i`, sorts by mtime ascending. Fallback to `~/.codex/generated_images/` only if requested dir is empty (with warning).
-- **Session dir naming:** `<timestamp>-<pid>` under `<cwd>/.codex-image-gen-tmp/`. Caller adds `.codex-image-gen-tmp/` to their `.gitignore` (this repo already does).
+- **Image discovery:** `listImages(dir)` filters by `\.(png|jpe?g|webp)$/i`, sorts by mtime ascending (filename tiebreaker so equal-mtime files sort deterministically — matters under FAT32's 2s resolution and on fast in-same-ms generation). Fallback to `~/.codex/generated_images/` only if requested dir is empty (with warning).
+- **Session dir naming:** `<timestamp>-<pid>` under `<cwd>/.codex-image-gen-tmp/` (interim) and copied finals into `<cwd>/codex-image-gen-output/` with the same `<sessionId>-<basename>` prefix (persistent). Caller adds both dir names to their `.gitignore` (this repo already does).
+- **Cleanup contract:** on `ok && !--debug`, the session tmp dir is removed via `rmSync(sessionDir, {recursive:true, force:true})`. Failures (`ok===false`) preserve tmp unconditionally for debugging. Cleanup errors emit a warning but do not flip `ok` to false.
 - **Settings patcher (`install.mjs`):** idempotent — re-runs are no-ops; tolerates missing/malformed settings.json by printing the rule instead of crashing.
 
 ## Repo files (entry points)

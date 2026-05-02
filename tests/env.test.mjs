@@ -4,7 +4,8 @@ import { readFakeCodexMeta, runTool } from './helpers.mjs';
 
 test('12. spawned codex env has OPENAI_API_KEY deleted (subscription billing lock)', async () => {
   const r = await runTool(
-    ['--style', 's', '--subject', 'x'],
+    // --debug preserves the tmp workdir so we can read the fake-codex meta dump.
+    ['--style', 's', '--subject', 'x', '--debug'],
     { env: { OPENAI_API_KEY: 'sk-fake-must-not-leak-to-codex' } },
   );
   assert.equal(r.json.ok, true);
@@ -15,7 +16,7 @@ test('12. spawned codex env has OPENAI_API_KEY deleted (subscription billing loc
 
 test('13. spawned codex env preserves CODEX_HOME (auth lives there)', async () => {
   const r = await runTool(
-    ['--style', 's', '--subject', 'x'],
+    ['--style', 's', '--subject', 'x', '--debug'],
     { env: { CODEX_HOME: '/some/custom/codex/home' } },
   );
   assert.equal(r.json.ok, true);

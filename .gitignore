@@ -1,5 +1,8 @@
-# Per-session output sandbox written by the tool when run from this dir
+# Per-session interim work dir written by the tool when run from this dir
 .codex-image-gen-tmp/
+
+# Persistent output dir where selected images are copied (the "use these" set)
+codex-image-gen-output/
 
 # Node
 node_modules/

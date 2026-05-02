@@ -28,7 +28,8 @@ node <<SCRIPT_PATH>> \
   --style "<style prompt — visual treatment>" \
   --subject "<subject prompt — what to depict>" \
   [--generate N] \
-  [--select M]
+  [--select M] \
+  [--debug]
 ```
 
 ### Parameters
@@ -37,6 +38,7 @@ node <<SCRIPT_PATH>> \
 - `--subject` (required, free text). Describes what to depict, including any composition / framing / background notes. Be specific. Example: `"two metal swords crossed in an X, transparent background, centered, no scene"`. If you want transparency, say so — codex's default is to use chroma-key removal.
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
+- `--debug` (optional flag). Keep the per-session tmp work dir on success. Default cleans it up to minimize disk impact. Failures always preserve tmp regardless. Only set this when you intend to inspect interim files.
 
 ### Output
 
@@ -45,36 +47,33 @@ JSON on stdout. Always inspect the result.
 ```json
 {
   "ok": true,
-  "generated": {
-    "count": 4,
-    "paths": [
-      "/abs/path/.codex-image-gen-tmp/<sessionId>/output/variant-1.png",
-      "..."
-    ]
-  },
+  "generated": { "count": 4, "paths": [] },
   "selected": {
     "count": 2,
     "paths": [
-      "/abs/path/.codex-image-gen-tmp/<sessionId>/output/selected/variant-2.png",
-      "..."
+      "/abs/cwd/codex-image-gen-output/<sessionId>-variant-2.png",
+      "/abs/cwd/codex-image-gen-output/<sessionId>-variant-3.png"
     ],
     "expected": 2
   },
-  "workdir": "/abs/path/.codex-image-gen-tmp/<sessionId>",
+  "outputDir": "/abs/cwd/codex-image-gen-output",
+  "workdir":   "/abs/cwd/.codex-image-gen-tmp/<sessionId>",
   "warnings": [],
   "durationMs": 345264
 }
 ```
 
-`ok` is true only when `generated.count == --generate` AND `selected.count == --select`. If `ok` is false, inspect `warnings` and `error`. The `selected.paths` array is the canonical "use these" list — even when `select == generate`, it points to all of `generated.paths`.
+`ok` is true only when `generated.count == --generate` AND `selected.count == --select`. If `ok` is false, inspect `warnings` and `error`.
+
+`selected.paths` is the canonical "use these" list and always points into the persistent output dir at `<cwd>/codex-image-gen-output/`. Filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
 
 ## After invoking
 
-The tool drops files into a temp session directory under the *caller's* current working directory (`./.codex-image-gen-tmp/<sessionId>/output/`). It does NOT move them to the final destination — that's your responsibility. After the tool returns:
+The tool copies selected files into `./codex-image-gen-output/` (relative to caller cwd) and removes the per-session tmp work dir on success. It does NOT move files to their final destination — that's your responsibility. After the tool returns:
 
-1. Inspect the image(s) (Read the PNG to view it).
-2. If the result looks right, copy/move from `selected.paths` to the project's permanent asset directory.
-3. Add `.codex-image-gen-tmp/` to the project's `.gitignore` if not already there.
+1. Inspect the image(s) (Read the PNG path from `selected.paths` to view it).
+2. If the result looks right, copy/move from `selected.paths` to the project's permanent asset directory. You'll typically want to drop the sessionId prefix from the filename when you do.
+3. Add `codex-image-gen-output/` and `.codex-image-gen-tmp/` to the project's `.gitignore` if not already there.
 
 ## Cost & timing awareness
 

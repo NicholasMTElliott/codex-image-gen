@@ -94,7 +94,7 @@ node "%USERPROFILE%\.codex-image-gen\codex-image-gen.mjs" ^
   --select 2
 ```
 
-Output is JSON on stdout with absolute paths to generated and selected images. Files live in `./.codex-image-gen-tmp/<sessionId>/output/` (relative to the caller's `cwd`).
+Output is JSON on stdout. Selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
 
 ### Parameters
 
@@ -102,21 +102,34 @@ Output is JSON on stdout with absolute paths to generated and selected images. F
 - `--subject` (required, free text). What to depict, including framing and background notes.
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
+- `--debug` (optional flag). Keep the per-session tmp work dir after a successful run. Default behavior cleans it up to minimize disk impact. Failed runs always preserve tmp regardless of this flag.
 
 ### Output JSON shape
 
 ```json
 {
   "ok": true,
-  "generated": { "count": 4, "paths": ["/abs/.../variant-1.png", "..."] },
-  "selected":  { "count": 2, "paths": ["/abs/.../selected/variant-2.png", "..."], "expected": 2 },
-  "workdir": "/abs/.../.codex-image-gen-tmp/<sessionId>",
+  "generated": { "count": 4, "paths": [] },
+  "selected":  {
+    "count": 2,
+    "paths": [
+      "/abs/cwd/codex-image-gen-output/<sessionId>-variant-2.png",
+      "/abs/cwd/codex-image-gen-output/<sessionId>-variant-3.png"
+    ],
+    "expected": 2
+  },
+  "outputDir": "/abs/cwd/codex-image-gen-output",
+  "workdir":   "/abs/cwd/.codex-image-gen-tmp/<sessionId>",
   "warnings": [],
   "durationMs": 345264
 }
 ```
 
-`ok` is `true` only when generated count matches `--generate` and selected count matches `--select`. Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder).
+`ok` is `true` only when generated count matches `--generate` and selected count matches `--select`.
+
+`selected.paths` is the canonical "use these" list and always points to the persistent output dir. `generated.paths` is empty after a successful cleanup (the tmp paths would be stale); pass `--debug` to surface the tmp paths instead, or look at `workdir` (preserved on failures or `--debug`).
+
+Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, copy/cleanup failures).
 
 ## Using it from Claude Code
 
@@ -178,14 +191,14 @@ If a manual run fails or the skill isn't being invoked, work down this list:
 
 ## Caller responsibilities
 
-The tool puts images in `./.codex-image-gen-tmp/<sessionId>/output/` — a temp session directory in the caller's working directory. It does **not** move final images to a permanent location.
+The tool copies the **selected** images into `./codex-image-gen-output/` with sessionId-prefixed filenames (e.g. `1716123456789-12345-variant-2.png`). The interim per-session work dir under `./.codex-image-gen-tmp/<sessionId>/` is cleaned up on success unless `--debug` is passed.
 
 After invocation:
-1. Inspect the image(s).
-2. Copy/move desired files from `selected.paths` to your final destination.
-3. Add `.codex-image-gen-tmp/` to your project's `.gitignore`.
+1. Inspect the image(s) — use `selected.paths` from the JSON output.
+2. Move desired files out of `./codex-image-gen-output/` to your final destination (or rename them in place to drop the sessionId prefix).
+3. Add both `codex-image-gen-output/` and `.codex-image-gen-tmp/` to your project's `.gitignore` so generated artifacts don't get committed.
 
-The tmp dir accumulates one subfolder per run. It's safe to delete the entire `.codex-image-gen-tmp/` directory whenever you've moved the keepers out — there's no state in there the tool needs across runs.
+If a run fails (`ok: false`) the tmp work dir is preserved so you can investigate. Pass `--debug` to keep tmp on a successful run too. It's safe to delete `./codex-image-gen-tmp/` and `./codex-image-gen-output/` whenever you've moved the keepers — there's no state in either dir the tool needs across runs.
 
 ## Design notes
 
@@ -208,4 +221,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues and PRs welcome at https://github.com/NicholasMTElliott/codex-image-gen. The tool is small (single ~300-line `.mjs` file) and intentionally zero-dep; please preserve both properties when proposing changes.
+Issues and PRs welcome at https://github.com/NicholasMTElliott/codex-image-gen. The tool is small (single ~350-line `.mjs` file) and intentionally zero-dep; please preserve both properties when proposing changes.
