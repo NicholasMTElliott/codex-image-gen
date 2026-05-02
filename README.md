@@ -1,0 +1,114 @@
+# codex-image-gen
+
+A small portable tool that lets Claude Code (or any CLI agent) generate raster images by shelling out to OpenAI's `codex` CLI — billed against the user's ChatGPT subscription, not the API.
+
+Ships with a Claude Code skill so the agent knows when and how to invoke it.
+
+## Why
+
+Claude Code can't generate images directly. The `codex` CLI can — and when authed against a ChatGPT subscription, image generation comes out of the plan's quota rather than burning API tokens. This tool wraps `codex exec` with the right flags, environment, and prompt template so an agent can call it without thinking about the gotchas.
+
+## What's in this directory
+
+| File | Purpose |
+|------|---------|
+| `codex-image-gen.mjs` | The tool. Plain Node ESM, no npm dependencies. |
+| `install.mjs` | Cross-platform installer. Copies the tool to `~/.codex-image-gen/` and the skill to `~/.claude/skills/codex-image-gen/`. |
+| `SKILL.md` | Claude Code skill template. The installer fills in the resolved install path. |
+| `README.md` | This file. |
+
+## Prerequisites
+
+1. **Node 18+** on `PATH`.
+2. **`codex` CLI** on `PATH`, authed against a ChatGPT plan.
+   - Install: https://github.com/openai/codex
+   - Auth: `codex login` (uses ChatGPT account)
+3. **Claude Code** (only needed if you want the skill auto-invoked).
+
+`codex` image generation routes to subscription billing only when `OPENAI_API_KEY` is **not set** in the environment. The wrapper deletes that variable before spawning codex, so the user's shell can have the API key set without breaking subscription routing for this tool.
+
+## Install
+
+```bash
+node install.mjs
+```
+
+This:
+1. Verifies `node` and `codex` are on `PATH`.
+2. Copies `codex-image-gen.mjs` and `README.md` to `~/.codex-image-gen/`.
+3. Renders `SKILL.md` with the absolute install path baked in and writes it to `~/.claude/skills/codex-image-gen/SKILL.md`.
+4. Prints the `Bash(...)` allow rule to add to `~/.claude/settings.json` for prompt-free invocation.
+
+To remove:
+
+```bash
+node install.mjs --uninstall
+```
+
+## Manual invocation
+
+```bash
+node ~/.codex-image-gen/codex-image-gen.mjs \
+  --style "photorealistic, sharp detail, dramatic lighting, studio product photo" \
+  --subject "two metal swords crossed in an X shape, transparent background, centered" \
+  --generate 4 \
+  --select 2
+```
+
+Output is JSON on stdout with absolute paths to generated and selected images. Files live in `./.codex-image-gen-tmp/<sessionId>/output/` (relative to the caller's `cwd`).
+
+### Parameters
+
+- `--style` (required, free text). Visual treatment description.
+- `--subject` (required, free text). What to depict, including framing and background notes.
+- `--generate` (optional, default 1). Number of variants.
+- `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
+
+### Output JSON shape
+
+```json
+{
+  "ok": true,
+  "generated": { "count": 4, "paths": ["/abs/.../variant-1.png", "..."] },
+  "selected":  { "count": 2, "paths": ["/abs/.../selected/variant-2.png", "..."], "expected": 2 },
+  "workdir": "/abs/.../.codex-image-gen-tmp/<sessionId>",
+  "warnings": [],
+  "durationMs": 345264
+}
+```
+
+`ok` is `true` only when generated count matches `--generate` and selected count matches `--select`. Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder).
+
+## Cost & timing
+
+- ~30-60s per image variant. Selection step adds ~30-60s.
+- Image turns consume ChatGPT subscription quota at roughly 3-5× the rate of text turns. There is a 5-hour rolling cap and a weekly cap. ChatGPT Plus is tight for ~20-image batches; Pro is recommended for heavier use.
+- Uses `gpt-image-2`. Quality is selected automatically by codex.
+
+## Caller responsibilities
+
+The tool puts images in `./.codex-image-gen-tmp/<sessionId>/output/` — a temp session directory in the caller's working directory. It does **not** move final images to a permanent location.
+
+After invocation:
+1. Inspect the image(s).
+2. Copy/move desired files from `selected.paths` to your final destination.
+3. Add `.codex-image-gen-tmp/` to your project's `.gitignore`.
+
+## Design notes
+
+- **Why no npm deps**: keeps install trivial. Just `node install.mjs`. No `node_modules`, no version pinning, no transitive supply chain.
+- **Why we delete `OPENAI_API_KEY`**: codex routes to API billing if it sees that variable, silently. We force subscription routing by stripping it from the spawned env.
+- **Why we don't override `CODEX_HOME`**: codex stores its ChatGPT auth there. Override → fresh-install state → no auth → 401. The codex#11435 parallel-session corruption bug (which a per-session `CODEX_HOME` *would* dodge) only matters under concurrent invocation; this tool is serial-by-design.
+- **Why prompt is piped via stdin**: `codex exec` accepts the prompt as a positional arg, but on Windows with `shell:true` (required to spawn `codex.cmd` post-CVE-2024-27980) Node concatenates args without escaping, so a multi-word prompt gets split. Stdin sidesteps the whole issue.
+- **Why `--full-auto`**: skips codex's per-shell-command approval prompts so the workflow is hands-off.
+- **Why `--cd` to the session output dir**: keeps codex's `workspace-write` sandbox confined to that directory. It can read from `~/.codex/` (its own state) but can only write into our session dir.
+
+## Compatibility notes
+
+- Tested on Windows 11 + codex CLI 0.125. Should work on macOS and Linux unchanged.
+- On non-Windows platforms `shell:true` is not required (codex is a real binary, not a `.cmd` shim) but is left enabled for consistency. Performance impact is negligible.
+- Requires Node 18+ for the optional-chaining `??` and `process.removeAllListeners`.
+
+## License
+
+Use it however you like. No warranty.

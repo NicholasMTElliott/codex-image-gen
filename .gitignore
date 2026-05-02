@@ -1,0 +1,14 @@
+# Per-session output sandbox written by the tool when run from this dir
+.codex-image-gen-tmp/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+Thumbs.db
+
+# Node (in case anyone ever adds package.json with deps)
+node_modules/
+*.log
