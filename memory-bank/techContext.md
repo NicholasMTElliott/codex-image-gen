@@ -9,7 +9,7 @@
 
 ## Constraints
 - **Zero npm deps.** Adding any is a non-starter without explicit approval.
-- **Single-file runtime.** The wrapper must stay one ~250-line `.mjs`.
+- **Single-file runtime.** The wrapper must stay one ~300-line `.mjs`.
 - **Env hygiene.**
   - DELETE `OPENAI_API_KEY` from the spawned env (forces ChatGPT-subscription billing).
   - DO NOT override `CODEX_HOME` (codex auth lives there).
@@ -37,7 +37,7 @@ Installer paths:
 - Optional: Claude Code (only needed for the auto-invoked skill).
 
 ## Tooling patterns
-- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation. `-h`/`--help` prints usage to stderr and exits 0.
+- **CLI shape:** `--style`, `--subject` required; `--generate`, `--select` optional with int validation. `-h`/`--help` prints usage to stdout and exits 0 (POSIX convention — pipeable). Usage-due-to-error (missing required arg, invalid number) prints to stderr and exits 2.
 - **Output contract:** JSON on stdout via `emit()`. Always the same shape. Exit code 0 iff `ok`.
 - **Error model:** all failure paths route through `emit(..., 1)` with a populated `error` or non-empty `warnings`. No partial JSON, no half-written stdout.
 - **Path style:** prompts to codex use posix-slash absolute paths (`replace(/\\/g,'/')`); fs operations use `path.join` natively.

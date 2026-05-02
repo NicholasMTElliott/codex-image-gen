@@ -64,11 +64,33 @@ node install.mjs --uninstall
 
 ## Manual invocation
 
+POSIX (bash/zsh):
+
 ```bash
 node ~/.codex-image-gen/codex-image-gen.mjs \
   --style "photorealistic, sharp detail, dramatic lighting, studio product photo" \
   --subject "two metal swords crossed in an X shape, transparent background, centered" \
   --generate 4 \
+  --select 2
+```
+
+Windows PowerShell — `~` does not expand in arguments, use `$env:USERPROFILE` (or the absolute path):
+
+```powershell
+node "$env:USERPROFILE\.codex-image-gen\codex-image-gen.mjs" `
+  --style "photorealistic, sharp detail, dramatic lighting, studio product photo" `
+  --subject "two metal swords crossed in an X shape, transparent background, centered" `
+  --generate 4 `
+  --select 2
+```
+
+Windows `cmd.exe`:
+
+```cmd
+node "%USERPROFILE%\.codex-image-gen\codex-image-gen.mjs" ^
+  --style "photorealistic, sharp detail, dramatic lighting, studio product photo" ^
+  --subject "two metal swords crossed in an X shape, transparent background, centered" ^
+  --generate 4 ^
   --select 2
 ```
 
@@ -186,4 +208,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues and PRs welcome at https://github.com/NicholasMTElliott/codex-image-gen. The tool is small (single ~250-line `.mjs` file) and intentionally zero-dep; please preserve both properties when proposing changes.
+Issues and PRs welcome at https://github.com/NicholasMTElliott/codex-image-gen. The tool is small (single ~300-line `.mjs` file) and intentionally zero-dep; please preserve both properties when proposing changes.

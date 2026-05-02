@@ -8,7 +8,7 @@ caller (Claude Code / shell)
    │  --style / --subject / --generate / --select
    ▼
 codex-image-gen.mjs
-   │  spawn('codex', ['exec','--full-auto','--cd', outDir]),
+   │  spawn('codex', ['exec','--full-auto','--skip-git-repo-check','--cd', outDir]),
    │     env without OPENAI_API_KEY, prompt via stdin
    ▼
 codex CLI (ChatGPT-authed)
@@ -25,6 +25,7 @@ listImages(outDir) + listImages(outDir/selected) → JSON to stdout
 - **Prompt via stdin, not argv.** On Windows `shell:true` is required to spawn `codex.cmd` (post-CVE-2024-27980), but Node concatenates args without escaping under `shell:true`, so multi-word prompts split. Stdin sidesteps this.
 - **`--cd` to session output dir.** Confines codex's `workspace-write` sandbox to that directory.
 - **`--full-auto`.** Skips per-shell-command approval prompts so the workflow is hands-off.
+- **`--skip-git-repo-check`.** The `--cd` target is always a fresh per-session tmp dir, never a git repo, so codex's trusted-dir guard would refuse every run otherwise. Safe because the prompt only asks codex to generate images and copy them inside that same dir — no destructive operations elsewhere.
 - **Posix-style path inside the prompt** (`replace(/\\/g, '/')`) — codex normalizes both, but forward slashes avoid backslash-escape ambiguity in tool-call parsing.
 - **mtime-sorted image listing** with fallbacks for both image-discovery and selection: if codex didn't write to the requested dir, look in `~/.codex/generated_images/`; if codex didn't produce a `selected/` subfolder, take first M generated images by mtime. Each fallback emits a warning.
 
