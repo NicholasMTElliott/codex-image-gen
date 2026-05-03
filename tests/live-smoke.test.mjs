@@ -55,13 +55,10 @@ test('25. live smoke: real codex 1×1 generation produces a valid PNG', { skip: 
 
 test('63. live smoke: real codex edit mode applies pose from one ref to character from another', async (t) => {
   if (SKIP) { t.skip('TEST_LIVE!=1'); return; }
-  // Uses alien.png + pose.png at the repo root. These are NOT committed
-  // (large generative PNGs; treated as developer-local fixtures). Drop in
-  // any two PNGs of your own with these names to run the test.
-  const alien = join(REPO_ROOT, 'alien.png');
-  const pose = join(REPO_ROOT, 'pose.png');
+  const alien = join(REPO_ROOT, 'examples', 'alien.png');
+  const pose = join(REPO_ROOT, 'examples', 'pose.png');
   if (!existsSync(alien) || !existsSync(pose)) {
-    t.skip(`live edit smoke skipped: drop alien.png + pose.png at repo root to enable (looked at ${alien} and ${pose})`);
+    t.skip(`live edit smoke skipped: missing fixtures (looked at ${alien} and ${pose})`);
     return;
   }
   const r = await runTool(

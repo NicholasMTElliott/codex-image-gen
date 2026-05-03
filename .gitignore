@@ -4,12 +4,6 @@
 # Persistent output dir where selected images are copied (the "use these" set)
 codex-image-gen-output/
 
-# Developer-local fixtures for the edit-mode live-smoke test (tests/live-smoke.test.mjs).
-# Drop in any two PNGs with these names at the repo root to enable test 63.
-# Not committed because they're typically large generative PNGs.
-/alien.png
-/pose.png
-
 # Node
 node_modules/
 npm-debug.log*
