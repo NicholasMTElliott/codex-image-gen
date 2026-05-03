@@ -1,18 +1,25 @@
 # systemPatterns
 
 ## Architecture
-Single-process Node ESM script. No daemon, no state, no IPC beyond the spawned codex child.
+Single-process Node ESM script. No daemon, no state, no IPC beyond the spawned codex child. Two subcommands share the spawn → scan → copy → cleanup pipeline; only the prompt synthesis (and, in edit mode, an additional reference-staging step) differ.
 
 ```
 caller (Claude Code / shell)
-   │  --style[-file] / --subject[-file] / --generate / --select / --name / --out
+   │  generate: --style[-file] / --subject[-file] / --generate / --select / --name / --out
+   │  edit:     --reference (xN) / --instruction[-file] / --generate / --select / --name / --out
    ▼
 codex-image-gen.mjs
+   │  parseArgs → subcommand dispatch (generate | edit; default generate)
+   │  edit only: planStaging → resolveInstructionTokens (validate @-tokens up-front,
+   │             exit 2 on typo) → stageReferences (copyFileSync each ref into
+   │             <sessionDir>/output/references/<basename>)
+   │  buildPrompt (mode-specific) → spawn:
    │  spawn('codex', ['exec','--full-auto','--skip-git-repo-check','--cd', tmpOutDir]),
    │     env without OPENAI_API_KEY, prompt via stdin
    ▼
 codex CLI (ChatGPT-authed)
    │  built-in image_gen tool → PNGs into tmpOutDir,
+   │  edit mode: also reads from tmpOutDir/references/<basename>
    │  optional review → copies winners to tmpOutDir/selected/
    ▼
 listImages → copyFileSync into <persistentOutputDir>/<destName>
@@ -22,11 +29,13 @@ listImages → copyFileSync into <persistentOutputDir>/<destName>
    │                                                     fallback adds sessionId)
    │  rmSync(<cwd>/.codex-image-gen-tmp/<sessionId>/) unless --debug or !ok
    ▼
-JSON to stdout (selected.paths in persistent dir, generated.paths [] after cleanup)
+JSON to stdout (selected.paths in persistent dir, generated.paths [] after cleanup;
+edit mode adds references[] and instruction.{raw,resolved})
 ```
 
 ## Major design choices
 - **No npm deps.** Trivial install, no node_modules, no supply chain.
+- **Subcommand dispatch with backward-compat default.** First positional arg (no leading `-`) selects mode (`generate` | `edit`). Absent or flag-first → defaults to `generate` so 0.2.x flag-only invocations keep working. Per-mode arg parsers reject the *other* mode's exclusive flags with a "unknown argument X for Y mode" error.
 - **Strip `OPENAI_API_KEY`** from spawned env. If codex sees it, it silently switches to API billing.
 - **Do not override `CODEX_HOME`.** Codex stores ChatGPT auth there; overriding → fresh-install state → 401. Codex#11435 parallel-corruption only matters concurrently; this tool is serial-by-design.
 - **Prompt via stdin, not argv.** On Windows `shell:true` is required to spawn `codex.cmd` (post-CVE-2024-27980), but Node concatenates args without escaping under `shell:true`, so multi-word prompts split. Stdin sidesteps this.
@@ -39,6 +48,14 @@ JSON to stdout (selected.paths in persistent dir, generated.paths [] after clean
 - **Filename strategy.** Default: `<sessionId>-<basename>` — collision-safe across runs but requires renaming when moving to a final asset path. With `--name <slug>`: `<slug><ext>` when `select=1`, `<slug>-<n><ext>` when `select>1` — no rename needed. On collision (re-run with same `--name` + same dir), falls back to a sessionId-disambiguated form (`<slug>-<sessionId>[.|-<n>]<ext>`) and emits a warning so prior keepers stay intact. Slug is restricted to `[A-Za-z0-9._-]+` to block path traversal and shell metachars at the boundary; users wanting arbitrary destinations should use `--out` for the dir part instead.
 - **Cleanup-on-success default.** On `ok && !--debug`, `rmSync(sessionDir, {recursive:true, force:true})` runs before emit. Failed runs (`ok===false`) preserve tmp unconditionally so the user can investigate. Cleanup failures are non-fatal — recorded as a warning, the run still reports `ok:true`.
 - **Stale-path elision.** After cleanup, the JSON's `generated.paths` is `[]` rather than the tmp paths that no longer exist. `generated.count` still reports what codex produced. `selected.paths` always points to the surviving persistent copies.
+
+### Edit-mode-specific design choices
+- **Stage references via copy, not `codex exec -i`.** Empirical finding: codex's `image_gen` tool reads files inside its working directory, but the `-i path/to/file` flag does not reliably surface external files into that workspace. Copying each `--reference` into `<sessionDir>/output/references/<basename>` is portable across operating systems (no Windows symlink-permission issues, no same-filesystem constraint of hardlinks) and the disk overhead is trivial since references are deleted with the rest of tmp on success.
+- **References staged into a `references/` subdir, not the cd root.** `listImages(<tmpOutputDir>)` is non-recursive and only counts files in the cd root — the subdir keeps reference files from being miscounted as generated outputs. Codex's own outputs land at `<tmpOutputDir>/variant-N.png` and the (optional) `<tmpOutputDir>/selected/` subfolder, alongside `<tmpOutputDir>/references/`.
+- **`@<staged-basename>` token grammar in `--instruction`.** Capture regex `/@([A-Za-z0-9._-]*[A-Za-z0-9_-])/g` — the trailing-non-dot constraint stops sentence-ending periods (`@pose.png.`) from being sucked into the token. Substitution regex `@<escaped>(?![A-Za-z0-9_-])` — boundary excludes `.` so `@pose.png.` substitutes correctly when followed by sentence punctuation. Substitution is applied longest-token-first to disambiguate when both `@cat` and `@cat.png` are staged.
+- **Up-front token validation.** Every `@`-token must resolve to a staged basename, otherwise exit 2 with the unknown-token list and the full staged mapping printed — this catches typos like `@alient.png` *before* burning a codex call. References passed via `--reference` but never `@`-mentioned are warned, not errored — codex may still pull from them in unintended ways.
+- **Auto-suffix on basename collision.** When two `--reference` paths share a basename, the second is renamed (`cat.png` + `cat-2.png`) and a warning is emitted that includes the staged name so the user can update their `--instruction`. Validation surfaces the mapping early so the user can correct without burning quota. Same-source dedup happens silently (with a warning), since duplicate paths are almost certainly user error rather than intent.
+- **`mode` field added to JSON output for both modes.** Edit mode additionally surfaces `references[]` (each `{source,staged,referenced}`) and `instruction.{raw,resolved}` so callers can see exactly what codex was asked to do after substitution.
 
 ## Component relationships
 - `codex-image-gen.mjs` — runtime. Pure: parse args → build prompt → spawn → scan → emit JSON.
@@ -53,7 +70,7 @@ JSON to stdout (selected.paths in persistent dir, generated.paths [] after clean
 3. Render SKILL.md (replace `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>`) → `~/.claude/skills/codex-image-gen/SKILL.md`.
 4. Patch `permissions.allow` in `~/.claude/settings.json` (idempotent; falls back to printing the rule if JSON is malformed).
 
-### Generation
+### Generate mode
 1. Parse args; resolve `--style-file`/`--subject-file` (mutually exclusive with their inline counterparts; UTF-8 read, `.trim()` to strip trailing newline, empty-after-trim is rejected); validate `select ≤ generate`, both positive integers; `--name` slug (if present) matches `[A-Za-z0-9._-]+`. `--debug` parsed as flag.
 2. Make `<cwd>/.codex-image-gen-tmp/<timestamp>-<pid>/output/` (the per-session tmp work dir).
 3. Build prompt: instructs codex to write exactly N PNGs into that absolute dir, and (if `select<generate`) copy M chosen files into `selected/`. Uses posix-slash absolute paths.
@@ -64,7 +81,16 @@ JSON to stdout (selected.paths in persistent dir, generated.paths [] after clean
 8. Resolve `persistentOutputDir = resolve(cwd, --out || 'codex-image-gen-output')`. Copy each selected file there using the filename strategy above (default `<sessionId>-<basename>`; with `--name`, slug-based with collision fallback). Copy failures are recorded as warnings.
 9. `ok = (generated.length == --generate) && (persistentSelected.length == --select)`.
 10. If `ok && !--debug`: `rmSync(sessionDir)` (best-effort; failure → warning). Else preserve tmp.
-11. Emit JSON: `selected.paths` = persistent paths; `generated.paths` = [] if cleaned up else tmp paths; `outputDir` = persistent dir; `workdir` = tmp session dir (may not exist after cleanup). Exit 0 if ok else 1.
+11. Emit JSON: `mode: "generate"`; `selected.paths` = persistent paths; `generated.paths` = [] if cleaned up else tmp paths; `outputDir` = persistent dir; `workdir` = tmp session dir (may not exist after cleanup). Exit 0 if ok else 1.
+
+### Edit mode
+1. Parse args (per-mode). At least one `--reference` and one of `--instruction`/`--instruction-file` required; rejects `--style`/`--subject` with a helpful "unknown argument for edit mode" error. Common-arg validation (generate, select, name) shared with generate mode.
+2. `planStaging(references)` — pure pass: resolve each path, validate exists+isFile+image-extension, dedup by absolute source, allocate staged basenames (auto-suffix on collision). Returns `entries[]` and `warnings[]`. Fails fast with exit 2 on bad paths *before* mkdir'ing anything.
+3. `resolveInstructionTokens(instruction, entries)` — extract every `@<token>` via regex; each must hit a staged basename. Unknown token → exit 2 with the available mapping printed. Marks `entry.referenced=true` for hits. Then substitutes `@<basename>` → `references/<basename>` longest-first. Returns the resolved string.
+4. Warn for any `entry.referenced===false` (passed but never `@`-mentioned).
+5. Make `<cwd>/.codex-image-gen-tmp/<timestamp>-<pid>/output/` and `<cwd>/.codex-image-gen-tmp/<timestamp>-<pid>/output/references/`. `copyFileSync` each entry's source into the staged path.
+6. Build edit-mode prompt: "Reference images available… Instructions: <resolved>… Generate N PNGs into <outputDir>… Do not modify or duplicate files under references/." Posix-slash paths.
+7. Steps 4–11 from generate mode flow above (spawn → scan → select → copy → cleanup → emit). Result JSON additionally has `mode:"edit"`, `references[]`, `instruction.{raw,resolved}`.
 
 ## Invariants
 - A single run is always serial. Never spawn multiple codex children in parallel.
