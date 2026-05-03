@@ -1,10 +1,13 @@
 # projectBrief
 
 ## Purpose
-Portable Node CLI tool that lets Claude Code (or any agent) generate raster PNG images by shelling out to OpenAI's `codex` CLI. Routes billing through the user's ChatGPT subscription instead of API tokens.
+Portable Node CLI tool that lets Claude Code (or any agent) generate or edit raster PNG images by shelling out to OpenAI's `codex` CLI. Routes billing through the user's ChatGPT subscription instead of API tokens.
 
 ## Scope
-- One ~370-line ESM entry point: `codex-image-gen.mjs`.
+- One ESM entry point: `codex-image-gen.mjs`.
+- Two subcommands:
+  - `generate` (default — keyword may be omitted) synthesizes a new image from `--style` + `--subject`.
+  - `edit` modifies or combines reference image(s) per a free-form `--instruction` whose `@<basename>` tokens resolve to staged paths.
 - Cross-platform installer: `install.mjs`. Copies tool to `~/.codex-image-gen/` and Claude Code skill to `~/.claude/skills/codex-image-gen/SKILL.md`.
 - Skill template: `SKILL.md` (placeholders `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>` rendered at install).
 - Zero npm dependencies. Node 18+ only.
@@ -13,7 +16,7 @@ Portable Node CLI tool that lets Claude Code (or any agent) generate raster PNG 
 
 ## Out of scope
 - SVG / vector output.
-- Image editing (resize, recolor, crop). Generation only.
+- Pixel-perfect image edits (resize, recolor, crop). `edit` mode is generative — for deterministic transforms, use a dedicated image library.
 - Concurrent / parallel invocation.
 - Bundling, transpiling, or any build step.
 

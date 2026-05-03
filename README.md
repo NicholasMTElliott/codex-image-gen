@@ -1,12 +1,16 @@
 # codex-image-gen
 
-A small portable tool that lets Claude Code (or any CLI agent) generate raster images by shelling out to OpenAI's `codex` CLI — billed against the user's ChatGPT subscription, not the API.
+A small portable tool that lets Claude Code (or any CLI agent) generate or edit raster images by shelling out to OpenAI's `codex` CLI — billed against the user's ChatGPT subscription, not the API.
+
+Two modes: `generate` synthesizes a new image from `--style` + `--subject` prompts; `edit` modifies or combines reference images per a free-form `--instruction` (apply a pose from one image to a character from another, produce variations of a character, etc.).
 
 Ships with a Claude Code skill so the agent knows when and how to invoke it.
 
 ## Why
 
 Claude Code can't generate images directly. The `codex` CLI can — and when authed against a ChatGPT subscription, image generation comes out of the plan's quota rather than burning API tokens. This tool wraps `codex exec` with the right flags, environment, and prompt template so an agent can call it without thinking about the gotchas.
+
+For `edit` mode specifically: codex's `image_gen` tool can read existing PNGs that live inside its working directory, but `codex exec`'s `-i` flag does not reliably surface them. This tool stages each `--reference` into the per-session sandbox at `references/<basename>` so codex can read them, then resolves `@<basename>` tokens in the instruction text into those staged paths.
 
 ## What's in this directory
 
@@ -64,20 +68,30 @@ node install.mjs --uninstall
 
 ## Manual invocation
 
+### `generate` mode (default — the `generate` keyword may be omitted)
+
 POSIX (bash/zsh):
 
 ```bash
-node ~/.codex-image-gen/codex-image-gen.mjs \
+node ~/.codex-image-gen/codex-image-gen.mjs generate \
   --style "photorealistic, sharp detail, dramatic lighting, studio product photo" \
   --subject "two metal swords crossed in an X shape, transparent background, centered" \
   --generate 4 \
   --select 2
 ```
 
+The `generate` keyword is optional — flag-only invocations from 0.2.x still work:
+
+```bash
+node ~/.codex-image-gen/codex-image-gen.mjs \
+  --style "..." \
+  --subject "..."
+```
+
 Windows PowerShell — `~` does not expand in arguments, use `$env:USERPROFILE` (or the absolute path):
 
 ```powershell
-node "$env:USERPROFILE\.codex-image-gen\codex-image-gen.mjs" `
+node "$env:USERPROFILE\.codex-image-gen\codex-image-gen.mjs" generate `
   --style "photorealistic, sharp detail, dramatic lighting, studio product photo" `
   --subject "two metal swords crossed in an X shape, transparent background, centered" `
   --generate 4 `
@@ -87,21 +101,41 @@ node "$env:USERPROFILE\.codex-image-gen\codex-image-gen.mjs" `
 Windows `cmd.exe`:
 
 ```cmd
-node "%USERPROFILE%\.codex-image-gen\codex-image-gen.mjs" ^
+node "%USERPROFILE%\.codex-image-gen\codex-image-gen.mjs" generate ^
   --style "photorealistic, sharp detail, dramatic lighting, studio product photo" ^
   --subject "two metal swords crossed in an X shape, transparent background, centered" ^
   --generate 4 ^
   --select 2
 ```
 
+### `edit` mode
+
+```bash
+node ~/.codex-image-gen/codex-image-gen.mjs edit \
+  --reference path/to/alien.png \
+  --reference path/to/pose.png \
+  --instruction "Render the character of @alien.png in the pose of @pose.png. Match @alien.png's style exactly."
+```
+
 Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide; pass `--out` to redirect into a different directory and/or `--name` to control the filename. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
 
 ### Parameters
+
+#### `generate` mode
 
 - `--style` (required if `--style-file` not given, free text). Visual treatment description.
 - `--style-file` (alternative to `--style`). Path to a UTF-8 text file containing the style prompt. Useful for long multi-line briefs that don't shell-escape cleanly. Mutually exclusive with `--style`. Leading/trailing whitespace trimmed; internal newlines preserved.
 - `--subject` (required if `--subject-file` not given, free text). What to depict, including framing and background notes.
 - `--subject-file` (alternative to `--subject`). Path to a UTF-8 text file containing the subject prompt. Same trimming rules as `--style-file`.
+
+#### `edit` mode
+
+- `--reference` (required, repeatable). Path to a reference image (`.png`/`.jpg`/`.jpeg`/`.webp`). Each reference is copied into the per-session work dir at `references/<basename>` so codex can read it. Basename collisions are auto-suffixed (`cat.png`, `cat-2.png`) with a warning — use the staged name in `--instruction`. Duplicate paths are deduped silently.
+- `--instruction` (required if `--instruction-file` not given). Free-form text describing what to do with the reference image(s). Reference files in this text by `@<staged-basename>`, e.g. `"Match @alien.png's character; match @pose.png's pose"`. Tokens are validated against the staged set up-front — a typo (`@alient.png` instead of `@alien.png`) exits with a helpful "did you mean…" message before spawning codex, so you don't burn quota on broken prompts. References that you pass but never `@`-mention emit a warning (codex may ignore them).
+- `--instruction-file` (alternative to `--instruction`). Path to a UTF-8 text file containing the instruction. Same trimming rules as `--style-file`.
+
+#### Common to both modes
+
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run that would overwrite, the tool falls back to a sessionId-disambiguated name and emits a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
@@ -113,6 +147,7 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
 ```json
 {
   "ok": true,
+  "mode": "generate",
   "generated": { "count": 4, "paths": [] },
   "selected":  {
     "count": 2,
@@ -129,23 +164,47 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
 }
 ```
 
+In `edit` mode, the JSON adds two extra fields:
+
+```json
+{
+  "mode": "edit",
+  "references": [
+    { "source": "/abs/path/alien.png", "staged": "alien.png", "referenced": true },
+    { "source": "/abs/path/pose.png",  "staged": "pose.png",  "referenced": true }
+  ],
+  "instruction": {
+    "raw":      "Render the character of @alien.png in the pose of @pose.png.",
+    "resolved": "Render the character of references/alien.png in the pose of references/pose.png."
+  }
+}
+```
+
 `ok` is `true` only when generated count matches `--generate` and selected count matches `--select`.
 
 `selected.paths` is the canonical "use these" list and always points to the persistent output dir. `generated.paths` is empty after a successful cleanup (the tmp paths would be stale); pass `--debug` to surface the tmp paths instead, or look at `workdir` (preserved on failures or `--debug`).
 
-Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, copy/cleanup failures).
+`references[].referenced` is `true` when the staged file appeared as an `@`-token in the instruction. A `false` entry triggers a warning — codex may ignore the reference, so either drop it from the call or `@`-mention it.
+
+Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, basename-collision auto-suffix in `edit` mode, duplicate-reference dedup, copy/cleanup failures).
 
 ## Using it from Claude Code
 
 Once installed, **restart Claude Code** if it was already running — it loads skills and settings at startup. After that, just ask for an image in any project; Claude reads the skill description, decides it matches your request, and runs the tool for you.
 
-Example dialogue:
+Example `generate` dialogue:
 
 > **You:** Generate a faction emblem for my game — predator silhouette, deep red, flat vector style with thick black outlines, transparent background.
 >
 > **Claude:** *(invokes `node ~/.codex-image-gen/codex-image-gen.mjs --style "flat vector, thick black outlines, deep red palette, transparent background" --subject "predator silhouette faction emblem, centered, no scene"`, waits ~45s, then opens the resulting PNG to show you and proposes a destination path)*
 
-Claude knows when **not** to use the skill too — for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), edits to existing images, or modifications of an established icon system in the repo, it'll fall back to writing code or editing files directly. Those exclusions are spelled out in the skill's `description` field, which the model reads to decide whether to load it.
+Example `edit` dialogue:
+
+> **You:** Take `alien.png` and pose it like `pose.png`.
+>
+> **Claude:** *(invokes `node ~/.codex-image-gen/codex-image-gen.mjs edit --reference alien.png --reference pose.png --instruction "Render the character of @alien.png in the pose of @pose.png. Keep the style of @alien.png exactly."`, waits ~60s, opens the resulting PNG)*
+
+Claude knows when **not** to use the skill — for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), pixel-perfect edits like resize/recolor/crop, or modifications of an established icon system in the repo, it'll fall back to writing code or editing files directly. Those exclusions are spelled out in the skill's `description` field, which the model reads to decide whether to load it.
 
 ## Updating
 
@@ -212,6 +271,8 @@ If a run fails (`ok: false`) the tmp work dir is preserved so you can investigat
 - **Why prompt is piped via stdin**: `codex exec` accepts the prompt as a positional arg, but on Windows with `shell:true` (required to spawn `codex.cmd` post-CVE-2024-27980) Node concatenates args without escaping, so a multi-word prompt gets split. Stdin sidesteps the whole issue.
 - **Why `--full-auto`**: skips codex's per-shell-command approval prompts so the workflow is hands-off.
 - **Why `--cd` to the session output dir**: keeps codex's `workspace-write` sandbox confined to that directory. It can read from `~/.codex/` (its own state) but can only write into our session dir.
+- **Why `edit` mode stages references via copy instead of `codex exec -i`**: in practice, codex's `image_gen` tool reads images that exist inside its working directory, but the `-i path/to/file` argument does not reliably surface external files into that workspace. Copying each reference into `<sessionDir>/output/references/<basename>` is portable across operating systems (no symlink permission issues on Windows, no same-filesystem constraint of hardlinks) and the disk overhead is trivial since references are deleted with the rest of tmp on success.
+- **Why `@<basename>` substitution in `--instruction`**: the model needs the literal staged path (`references/alien.png`) inside the prompt, but the user wrote the prompt before knowing the staging dir. The `@`-token form lets the user write naturally with the basename they passed, gets validated against the staged set up-front (so typos fail before burning quota), and is substituted into the codex-bound prompt automatically.
 
 ## Compatibility notes
 

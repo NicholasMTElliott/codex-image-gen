@@ -2,15 +2,24 @@
 /**
  * codex-image-gen
  *
- * Invoke OpenAI's codex CLI to generate raster images using the user's ChatGPT
- * subscription billing (NOT API tokens). Generates N variants and optionally
- * has codex review them and pick the best M.
+ * Invoke OpenAI's codex CLI to produce raster images using the user's ChatGPT
+ * subscription billing (NOT API tokens). Two subcommands:
+ *
+ *   generate (default) — synthesize a new image from --style + --subject
+ *   edit               — modify or combine reference image(s) per --instruction
  *
  * Usage:
- *   node codex-image-gen.mjs \
+ *   node codex-image-gen.mjs generate \
  *     --style "western cartoon, thick black outlines, vibrant flat color" \
  *     --subject "Kharr Dominion faction emblem, predator silhouette, deep red" \
  *     --generate 4 --select 2
+ *
+ *   node codex-image-gen.mjs edit \
+ *     --reference alien.png --reference pose.png \
+ *     --instruction "Render the character of @alien.png in the pose of @pose.png"
+ *
+ * The "generate" subcommand may be omitted (it is the default) — existing
+ * callers using flags-only invocation continue to work unchanged.
  *
  * Output: selected images are copied to <cwd>/codex-image-gen-output/ with
  * sessionId-prefixed filenames so consecutive runs don't collide. JSON on
@@ -45,8 +54,35 @@ process.on('warning', (w) => {
 });
 
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
+// @-token grammar in --instruction: same charset as --name (filename-safe).
+// The capture requires the last char to be non-dot so trailing prose
+// punctuation (e.g. "@pose.png." at end of sentence) isn't sucked into the
+// token. The substitution boundary excludes dot too, so the substitution
+// fires when followed by sentence punctuation. We rely on longest-first
+// substitution to disambiguate when both "@cat" and "@cat.png" are staged.
+const AT_TOKEN_RE = /@([A-Za-z0-9._-]*[A-Za-z0-9_-])/g;
+const AT_TOKEN_BOUNDARY = '(?![A-Za-z0-9_-])';
+
+// ---------- arg parsing ----------
 
 function parseArgs(argv) {
+  // First positional (no leading -) chooses subcommand. Absent or flag-first
+  // → default to 'generate' for backward compat with 0.2.x callers.
+  let mode = 'generate';
+  let rest = argv;
+  if (argv.length > 0 && !argv[0].startsWith('-')) {
+    if (argv[0] === 'generate' || argv[0] === 'edit') {
+      mode = argv[0];
+      rest = argv.slice(1);
+    } else {
+      process.stderr.write(`error: unknown subcommand "${argv[0]}" (expected "generate" or "edit")\n`);
+      process.exit(2);
+    }
+  }
+  return mode === 'edit' ? parseEditArgs(rest) : parseGenerateArgs(rest);
+}
+
+function parseGenerateArgs(argv) {
   let style = '';
   let subject = '';
   let styleFile = '';
@@ -70,43 +106,72 @@ function parseArgs(argv) {
     else if (arg === '--out') { out = next ?? ''; i++; }
     else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
+    else { usageErr(`unknown argument "${arg}" for generate mode`); }
   }
 
   // --style/--style-file (and --subject/--subject-file) are mutually exclusive.
   // Reject before reading so users get a clear "you set both" error rather
   // than silently picking one.
-  if (style && styleFile) {
-    process.stderr.write('error: --style and --style-file are mutually exclusive\n');
-    process.exit(2);
-  }
-  if (subject && subjectFile) {
-    process.stderr.write('error: --subject and --subject-file are mutually exclusive\n');
-    process.exit(2);
-  }
+  if (style && styleFile) usageErr('--style and --style-file are mutually exclusive');
+  if (subject && subjectFile) usageErr('--subject and --subject-file are mutually exclusive');
   if (styleFile) style = readPromptFile(styleFile, '--style-file');
   if (subjectFile) subject = readPromptFile(subjectFile, '--subject-file');
 
   if (!style || !subject) { printUsage(process.stderr); process.exit(2); }
-  if (!Number.isInteger(generate) || generate < 1) {
-    process.stderr.write('error: --generate must be a positive integer\n');
-    process.exit(2);
-  }
-  if (!Number.isInteger(select) || select < 1) {
-    process.stderr.write('error: --select must be a positive integer\n');
-    process.exit(2);
-  }
-  if (select > generate) {
-    process.stderr.write('error: --select cannot exceed --generate\n');
-    process.exit(2);
-  }
-  if (name && !/^[A-Za-z0-9._-]+$/.test(name)) {
-    // Restrict to filename-safe chars to block path traversal and shell-meta
-    // surprises. Users who want arbitrary paths can use --out instead.
-    process.stderr.write('error: --name must contain only letters, digits, ., _, -\n');
-    process.exit(2);
+  validateCommonArgs({ generate, select, name });
+
+  return { mode: 'generate', style, subject, generate, select, debug, name, out };
+}
+
+function parseEditArgs(argv) {
+  const references = [];
+  let instruction = '';
+  let instructionFile = '';
+  let generate = 1;
+  let select = 1;
+  let debug = false;
+  let name = '';
+  let out = '';
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === '--reference') { references.push(next ?? ''); i++; }
+    else if (arg === '--instruction') { instruction = next ?? ''; i++; }
+    else if (arg === '--instruction-file') { instructionFile = next ?? ''; i++; }
+    else if (arg === '--generate') { generate = parseInt(next ?? '', 10); i++; }
+    else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
+    else if (arg === '--name') { name = next ?? ''; i++; }
+    else if (arg === '--out') { out = next ?? ''; i++; }
+    else if (arg === '--debug') { debug = true; }
+    else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
+    else { usageErr(`unknown argument "${arg}" for edit mode`); }
   }
 
-  return { style, subject, generate, select, debug, name, out };
+  if (instruction && instructionFile) usageErr('--instruction and --instruction-file are mutually exclusive');
+  if (instructionFile) instruction = readPromptFile(instructionFile, '--instruction-file');
+  if (!instruction) usageErr('edit mode requires --instruction or --instruction-file');
+  if (references.length === 0) usageErr('edit mode requires at least one --reference <path>');
+  for (const r of references) {
+    if (!r) usageErr('--reference requires a path argument');
+  }
+  validateCommonArgs({ generate, select, name });
+
+  return { mode: 'edit', references, instruction, generate, select, debug, name, out };
+}
+
+function validateCommonArgs({ generate, select, name }) {
+  if (!Number.isInteger(generate) || generate < 1) usageErr('--generate must be a positive integer');
+  if (!Number.isInteger(select) || select < 1) usageErr('--select must be a positive integer');
+  if (select > generate) usageErr('--select cannot exceed --generate');
+  // Restrict to filename-safe chars to block path traversal and shell-meta
+  // surprises. Users who want arbitrary paths can use --out instead.
+  if (name && !/^[A-Za-z0-9._-]+$/.test(name)) usageErr('--name must contain only letters, digits, ., _, -');
+}
+
+function usageErr(msg) {
+  process.stderr.write(`error: ${msg}\n`);
+  process.exit(2);
 }
 
 function readPromptFile(path, flag) {
@@ -130,9 +195,20 @@ function readPromptFile(path, flag) {
 
 function printUsage(stream = process.stderr) {
   stream.write(
-    `Usage: node codex-image-gen.mjs (--style "<text>" | --style-file <path>) (--subject "<text>" | --subject-file <path>) [--generate N] [--select M] [--name SLUG] [--out DIR] [--debug]
+    `Usage:
+  node codex-image-gen.mjs [generate] (--style "<text>" | --style-file <path>)
+                                      (--subject "<text>" | --subject-file <path>)
+                                      [--generate N] [--select M]
+                                      [--name SLUG] [--out DIR] [--debug]
 
-Required (one of each pair):
+  node codex-image-gen.mjs edit --reference <path> [--reference <path>...]
+                                (--instruction "<text>" | --instruction-file <path>)
+                                [--generate N] [--select M]
+                                [--name SLUG] [--out DIR] [--debug]
+
+The "generate" subcommand may be omitted (it is the default).
+
+generate mode — synthesize a new image from prompts:
   --style          Style prompt as inline text (visual treatment)
   --style-file     Read style prompt from a UTF-8 text file. Useful for long
                    multi-line briefs that don't shell-escape cleanly.
@@ -141,40 +217,135 @@ Required (one of each pair):
   --subject-file   Read subject prompt from a UTF-8 text file. Mutually
                    exclusive with --subject.
 
-Optional:
+edit mode — modify or combine reference images per a free-form instruction:
+  --reference         Path to a reference image (.png/.jpg/.jpeg/.webp).
+                      Repeatable. Each is staged into the codex working dir
+                      as references/<basename>; basename collisions auto-
+                      suffix to -2, -3, ... and emit a warning.
+  --instruction       Free-form text describing what to do with the
+                      references. Reference files in this text by @-token
+                      using the staged basename, e.g. "match the character
+                      of @alien.png in the pose of @pose.png". Tokens are
+                      validated up-front — typos exit before spawning codex.
+  --instruction-file  Read instruction from a UTF-8 text file. Mutually
+                      exclusive with --instruction.
+
+Common (both modes):
   --generate   Number of variants to generate (default: 1)
   --select     Number of variants to keep (default: 1; must be <= generate)
                When select < generate, codex reviews the variants and picks
                the strongest. When select == generate, no review step runs.
-  --name       Output filename slug. With --name kharr-emblem and select=1,
-               the persistent file is "kharr-emblem.png"; with select>1, it's
-               "kharr-emblem-1.png", "kharr-emblem-2.png", ... If a target
-               filename already exists, falls back to a sessionId-suffixed
-               name and emits a warning. Allowed chars: letters, digits, ., _,
-               -. Without --name, files keep the default sessionId prefix.
+  --name       Output filename slug. With --name foo and select=1 the
+               persistent file is "foo.png"; with select>1 it's "foo-1.png",
+               "foo-2.png", ... If a target filename already exists, falls
+               back to a sessionId-disambiguated name and emits a warning.
+               Allowed chars: letters, digits, ., _, -. Without --name, files
+               keep the default sessionId prefix.
   --out        Persistent output directory (relative to cwd, or absolute).
                Default: ./codex-image-gen-output/. Created if missing.
   --debug      Keep the per-session tmp dir after a successful run. By
                default tmp is cleaned up on success to minimize disk impact;
                failed runs always keep tmp for debugging regardless.
 
-Output: selected images are copied to the persistent output directory:
-  <outDir>/<sessionId>-<filename>.png       (default — sessionId prefix
-                                             prevents cross-run collisions)
-  <outDir>/<slug>[-<n>].png                 (with --name)
-
-JSON on stdout reports both the persistent paths (selected.paths) and the
-output dir. The interim per-session work dir lives at
-  <cwd>/.codex-image-gen-tmp/<sessionId>/
-and is removed automatically on a successful run unless --debug is passed
-(or the run failed — failures preserve tmp so the user can investigate).
+Output: JSON on stdout. selected.paths is the canonical "use these" list,
+absolute paths inside the persistent output directory. The interim per-session
+work dir lives at <cwd>/.codex-image-gen-tmp/<sessionId>/ and is removed
+automatically on a successful run unless --debug is passed (or the run
+failed — failures preserve tmp so the user can investigate).
 
 Add the output dir and ".codex-image-gen-tmp/" to your project's .gitignore.
 `,
   );
 }
 
-function buildPrompt(args, outDir) {
+// ---------- reference staging + @-resolution (edit mode) ----------
+
+function planStaging(references) {
+  // Returns { entries, warnings }. Side-effects (file copies) happen later in
+  // stageReferences — this pass is pure validation + name allocation, so we
+  // can fail fast before mkdir'ing anything.
+  // - dedups by absolute source path
+  // - auto-suffixes basename collisions: foo.png + foo-2.png if two distinct
+  //   sources share basename
+  // - validates each source exists, is a file, and has an image extension
+  const seen = new Map();
+  const used = new Set();
+  const entries = [];
+  const warnings = [];
+  for (const src of references) {
+    const abs = resolve(src);
+    if (seen.has(abs)) {
+      warnings.push(`reference ${src} is a duplicate of an earlier reference; ignoring`);
+      continue;
+    }
+    if (!existsSync(abs)) usageErr(`--reference ${src} does not exist`);
+    let s;
+    try { s = statSync(abs); } catch (e) { usageErr(`--reference ${src} unreadable: ${e.message}`); }
+    if (!s.isFile()) usageErr(`--reference ${src} is not a regular file`);
+    if (!IMAGE_EXTS.test(abs)) usageErr(`--reference ${src} extension not in {png,jpg,jpeg,webp}`);
+    let stagedBase = basename(abs);
+    if (used.has(stagedBase)) {
+      const ext = extname(stagedBase);
+      const stem = stagedBase.slice(0, -ext.length);
+      let n = 2;
+      while (used.has(`${stem}-${n}${ext}`)) n++;
+      const renamed = `${stem}-${n}${ext}`;
+      warnings.push(`reference ${src} basename collides with an earlier reference; staged as ${renamed} (use @${renamed} in --instruction)`);
+      stagedBase = renamed;
+    }
+    used.add(stagedBase);
+    const entry = { source: src, absSource: abs, staged: stagedBase, referenced: false };
+    seen.set(abs, entry);
+    entries.push(entry);
+  }
+  return { entries, warnings };
+}
+
+function resolveInstructionTokens(instruction, stagingEntries) {
+  // Find every @<word> token and validate against staged basenames. On
+  // success, substitute @<basename> → references/<basename> in the codex-
+  // bound text. On any unknown token, exit 2 with the full mapping printed
+  // so the user can correct typos before burning a codex call.
+  const stagedSet = new Map(stagingEntries.map((e) => [e.staged, e]));
+  const tokens = new Set();
+  let m;
+  while ((m = AT_TOKEN_RE.exec(instruction)) !== null) tokens.add(m[1]);
+  const unknown = [];
+  for (const t of tokens) {
+    if (stagedSet.has(t)) stagedSet.get(t).referenced = true;
+    else unknown.push(t);
+  }
+  if (unknown.length > 0) {
+    const known = stagingEntries.map((e) => e.staged).join(', ');
+    process.stderr.write(`error: --instruction references unknown @-token(s): ${unknown.map((t) => '@' + t).join(', ')}\n`);
+    process.stderr.write(`available staged references: ${known || '(none)'}\n`);
+    process.exit(2);
+  }
+  // Substitute longest tokens first so that, when both "@cat" and "@cat.png"
+  // are staged, "@cat.png" is replaced before the bare "@cat" regex scans
+  // (the boundary alone can't tell them apart since "." is now allowed
+  // immediately after a token).
+  const ordered = [...tokens].sort((a, b) => b.length - a.length);
+  let resolved = instruction;
+  for (const t of ordered) {
+    const re = new RegExp(`@${escapeRe(t)}${AT_TOKEN_BOUNDARY}`, 'g');
+    resolved = resolved.replace(re, `references/${t}`);
+  }
+  return resolved;
+}
+
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+function stageReferences(entries, refsDir) {
+  mkdirSync(refsDir, { recursive: true });
+  for (const e of entries) {
+    copyFileSync(e.absSource, join(refsDir, e.staged));
+  }
+}
+
+// ---------- prompt synthesis ----------
+
+function buildGeneratePrompt(args, outDir) {
   const { style, subject, generate, select } = args;
   // Posix-style path for the prompt — codex normalizes either, but forward
   // slashes avoid backslash-escape ambiguity in its tool-call parsing.
@@ -211,6 +382,47 @@ function buildPrompt(args, outDir) {
   );
   return lines.join('\n');
 }
+
+function buildEditPrompt(args, outDir, resolvedInstruction, stagingEntries) {
+  const { generate, select } = args;
+  const outDirP = outDir.replace(/\\/g, '/');
+  const refList = stagingEntries.map((e) => `  - references/${e.staged}`).join('\n');
+  const lines = [
+    `Please generate ${generate} bitmap raster image${generate > 1 ? 's' : ''} (PNG) using your built-in image_gen tool, derived from the reference image(s) below per the instructions.`,
+    `This is for an asset; output must be a bitmap, not SVG or code.`,
+    ``,
+    `Reference images available in your working directory:`,
+    refList,
+    ``,
+    `Instructions:`,
+    resolvedInstruction,
+    ``,
+    `After generation, copy the resulting PNG file${generate > 1 ? 's' : ''} to this absolute directory:`,
+    `  ${outDirP}`,
+    ``,
+    `Use distinct filenames such as variant-1.png${generate > 1 ? `, variant-2.png, ...` : ''}.`,
+    `That directory must contain exactly ${generate} PNG file${generate > 1 ? 's' : ''} when you are done.`,
+    `Do not modify or duplicate the files under references/ — they are inputs only.`,
+  ];
+  if (select < generate) {
+    lines.push(
+      ``,
+      `Then review the ${generate} variants critically and pick the ${select} strongest based on:`,
+      `  - fidelity to the reference image(s) and the Instructions`,
+      `  - composition, clarity, visual appeal`,
+      ``,
+      `Copy the ${select} chosen file${select > 1 ? 's' : ''} into a subfolder named "selected" inside ${outDirP}.`,
+      `The "selected" subfolder must contain exactly ${select} PNG file${select > 1 ? 's' : ''} when you are done.`,
+    );
+  }
+  lines.push(
+    ``,
+    `Do not ask for confirmation. Proceed directly with generation and file placement, then stop.`,
+  );
+  return lines.join('\n');
+}
+
+// ---------- shared runtime ----------
 
 function listImages(dir) {
   if (!existsSync(dir)) return [];
@@ -254,6 +466,46 @@ function emit(r, code) {
   process.exit(code);
 }
 
+function buildResult(state) {
+  const {
+    ok, args, stagingEntries, instructionResolved,
+    generatedPaths, persistentSelectedPaths, persistentOutputDir,
+    sessionDir, warnings, cleanedUp, error, durationMs,
+  } = state;
+  const r = {
+    ok,
+    mode: args.mode,
+    generated: {
+      count: generatedPaths.length,
+      // After cleanup the tmp paths are stale; surface [] so callers don't
+      // get broken paths. With --debug or on partial failure, surface the
+      // tmp paths so they're still inspectable.
+      paths: cleanedUp ? [] : generatedPaths,
+    },
+    selected: {
+      count: persistentSelectedPaths.length,
+      paths: persistentSelectedPaths,
+      expected: args.select,
+    },
+    outputDir: persistentOutputDir,
+    workdir: sessionDir,
+    warnings,
+    durationMs,
+  };
+  if (args.mode === 'edit') {
+    r.references = stagingEntries.map((e) => ({
+      source: e.source,
+      staged: e.staged,
+      referenced: e.referenced,
+    }));
+    r.instruction = { raw: args.instruction, resolved: instructionResolved };
+  }
+  if (error) r.error = error;
+  return r;
+}
+
+// ---------- main ----------
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const start = Date.now();
@@ -273,38 +525,65 @@ async function main() {
   // folder). resolve() handles both relative and absolute paths.
   const persistentOutputDir = resolve(cwd, args.out || 'codex-image-gen-output');
 
+  // Mode-specific prompt + (in edit mode) reference staging.
+  let prompt;
+  let stagingEntries = [];
+  let instructionResolved = null;
+  if (args.mode === 'edit') {
+    const planned = planStaging(args.references);
+    stagingEntries = planned.entries;
+    warnings.push(...planned.warnings);
+    instructionResolved = resolveInstructionTokens(args.instruction, stagingEntries);
+    for (const e of stagingEntries) {
+      if (!e.referenced) {
+        warnings.push(`reference ${e.staged} was not @-mentioned in --instruction; codex may ignore it`);
+      }
+    }
+    try {
+      stageReferences(stagingEntries, join(tmpOutputDir, 'references'));
+    } catch (e) {
+      // A staging failure (disk full, dest perms, source vanished mid-run)
+      // means codex can't see the references the instruction depends on;
+      // there's no graceful degradation. Emit ok=false through buildResult so
+      // the JSON keeps its documented edit-mode shape (mode, references[],
+      // instruction.{raw,resolved}) — invaluable for debugging.
+      return emit(buildResult({
+        ok: false, args, stagingEntries, instructionResolved,
+        generatedPaths: [], persistentSelectedPaths: [],
+        persistentOutputDir, sessionDir, warnings, cleanedUp: false,
+        error: `failed to stage references: ${e.message}`,
+        durationMs: Date.now() - start,
+      }), 1);
+    }
+    prompt = buildEditPrompt(args, tmpOutputDir, instructionResolved, stagingEntries);
+  } else {
+    prompt = buildGeneratePrompt(args, tmpOutputDir);
+  }
+
   const env = { ...process.env };
   delete env.OPENAI_API_KEY;
-
-  const prompt = buildPrompt(args, tmpOutputDir);
 
   let runResult;
   try {
     runResult = await runCodex(prompt, env, tmpOutputDir);
   } catch (e) {
-    return emit({
-      ok: false,
-      generated: { count: 0, paths: [] },
-      selected: { count: 0, paths: [], expected: args.select },
-      outputDir: persistentOutputDir,
-      workdir: sessionDir,
-      warnings,
+    return emit(buildResult({
+      ok: false, args, stagingEntries, instructionResolved,
+      generatedPaths: [], persistentSelectedPaths: [],
+      persistentOutputDir, sessionDir, warnings, cleanedUp: false,
       error: `failed to spawn codex: ${e.message}`,
       durationMs: Date.now() - start,
-    }, 1);
+    }), 1);
   }
 
   if (runResult.code !== 0) {
-    return emit({
-      ok: false,
-      generated: { count: 0, paths: [] },
-      selected: { count: 0, paths: [], expected: args.select },
-      outputDir: persistentOutputDir,
-      workdir: sessionDir,
-      warnings,
+    return emit(buildResult({
+      ok: false, args, stagingEntries, instructionResolved,
+      generatedPaths: [], persistentSelectedPaths: [],
+      persistentOutputDir, sessionDir, warnings, cleanedUp: false,
       error: `codex exited with code ${runResult.code}. stderr tail: ${runResult.stderr.slice(-500).trim()}`,
       durationMs: Date.now() - start,
-    }, 1);
+    }), 1);
   }
 
   let generatedPaths = listImages(tmpOutputDir);
@@ -391,35 +670,29 @@ async function main() {
     }
   }
 
-  emit({
-    ok,
-    generated: {
-      count: generatedPaths.length,
-      // After cleanup the tmp paths are stale; surface [] so callers don't
-      // get broken paths. With --debug or on partial failure, surface the
-      // tmp paths so they're still inspectable.
-      paths: cleanedUp ? [] : generatedPaths,
-    },
-    selected: {
-      count: persistentSelectedPaths.length,
-      paths: persistentSelectedPaths,
-      expected: args.select,
-    },
-    outputDir: persistentOutputDir,
-    workdir: sessionDir,
-    warnings,
+  emit(buildResult({
+    ok, args, stagingEntries, instructionResolved,
+    generatedPaths, persistentSelectedPaths, persistentOutputDir,
+    sessionDir, warnings, cleanedUp,
     durationMs: Date.now() - start,
-  }, ok ? 0 : 1);
+  }), ok ? 0 : 1);
 }
 
 main().catch((e) => {
+  // Last-resort catch: only fires for unexpected exceptions inside main()
+  // that escape the in-flow error handling above (today, every known failure
+  // routes through emit(buildResult(...), 1) which preserves the documented
+  // shape). We don't have args here, so mode is "unknown"; everything else
+  // matches the documented contract so callers can still parse the JSON.
   emit({
     ok: false,
+    mode: 'unknown',
     generated: { count: 0, paths: [] },
     selected: { count: 0, paths: [], expected: 0 },
+    outputDir: '',
     workdir: '',
     warnings: [],
-    error: e.message,
+    error: `unhandled: ${e.message}`,
     durationMs: 0,
   }, 1);
 });

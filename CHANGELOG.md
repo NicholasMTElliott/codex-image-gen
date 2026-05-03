@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `edit` subcommand modifies or combines reference image(s) per a free-form
+  `--instruction`. Pass one or more `--reference <path>` flags; each is staged
+  into the per-session sandbox at `references/<basename>` so codex can read it.
+  Reference files in the instruction text via `@<staged-basename>` (e.g.
+  `"Render @alien.png in the pose of @pose.png"`); tokens are validated up-front
+  and substituted with the staged path before the prompt is sent. Typo'd tokens
+  exit 2 with the available mapping printed before any codex call. Basename
+  collisions auto-suffix to `-2`, `-3`, … with a warning; duplicate paths
+  dedup silently. References passed but never `@`-mentioned trigger an
+  "unreferenced" warning. `--instruction-file` provides the same text-from-file
+  ergonomics as `--style-file` / `--subject-file`.
+- `mode` field added to JSON output for both subcommands (`"generate"` or
+  `"edit"`). `edit` mode additionally surfaces `references[]` (each with
+  `{source, staged, referenced}`) and `instruction.{raw, resolved}` so callers
+  can inspect exactly what codex was asked to do.
+- `generate` keyword as an explicit subcommand (still the default; flag-only
+  invocations from 0.2.x continue to work unchanged).
+- Live-smoke coverage for edit mode (gated on `TEST_LIVE=1`).
+
+### Changed
+- The single-file runtime grew to accommodate the edit subcommand. Both
+  subcommands share spawn / scan / copy / cleanup; only prompt synthesis and
+  (in edit mode) reference staging differ.
+- Per-mode arg parsing now rejects unknown flags with a clear "unknown
+  argument X for Y mode" error instead of silently ignoring them. This is a
+  minor behavior change from 0.2.x which silently ignored typos; intent is
+  to surface mistakes early. Pass `--help` to see the current per-mode flag
+  set.
+
 ## [0.2.0] - 2026-05-02
 
 ### Added

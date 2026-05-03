@@ -1,30 +1,33 @@
 ---
 name: codex-image-gen
-description: Generate raster/bitmap images (PNG) — icons, logos, faction emblems, illustrations, photos, textures, sprites, hero art, mockups — by shelling out to OpenAI's codex CLI. Uses the user's ChatGPT subscription billing (NOT API tokens). Invoke when the user asks for an image asset and Claude Code lacks a built-in image-generation tool. Do NOT use this skill for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), edits to existing images, or modifications of an established icon system in the repo.
+description: Generate or edit raster/bitmap images (PNG) — icons, logos, faction emblems, illustrations, photos, textures, sprites, hero art, mockups — by shelling out to OpenAI's codex CLI. Uses the user's ChatGPT subscription billing (NOT API tokens). Two modes — `generate` (synthesize from prompts) and `edit` (modify or combine reference images per a free-form instruction; e.g. apply a pose from one image to a character from another, or produce variations of an existing character). Invoke when the user asks for an image asset and Claude Code lacks a built-in image-generation tool. Do NOT use this skill for SVG/vector output, ASCII art, code that draws (Canvas/CSS/HTML), or modifications of an established icon system in the repo.
 allowed-tools:
   - Bash(node <<SCRIPT_PATH>> *)
 ---
 
 # codex-image-gen
 
-Shells out to the user's locally-installed `codex` CLI to generate raster images via their ChatGPT subscription. Each invocation generates `--generate N` variants and optionally has codex review them and select the `--select M` strongest.
+Shells out to the user's locally-installed `codex` CLI to generate or edit raster images via their ChatGPT subscription. Two subcommands: `generate` (synthesize a new image from `--style` + `--subject`) and `edit` (modify or combine reference images per a free-form `--instruction`). Both modes produce `--generate N` variants and optionally have codex review them and select the `--select M` strongest.
 
 ## When to use
 
-- User asks for a new bitmap image asset: icon, logo, faction emblem, illustration, photo, texture, sprite, hero/cover art, UI mockup, concept art.
+- User asks for a new bitmap image asset: icon, logo, faction emblem, illustration, photo, texture, sprite, hero/cover art, UI mockup, concept art → use `generate`.
+- User wants to apply a transformation to existing reference image(s): change pose, change expression, swap a character into a different scene, produce variations of an existing character (happy/sad/angry avatars), combine elements from multiple references → use `edit`.
 - The output should be a `.png` file you (or the user) move into the project.
 
 ## When NOT to use
 
 - User wants SVG, vector art, or code that procedurally draws (Canvas, CSS, HTML, p5.js, etc.).
-- User wants to edit an existing image (resize, recolor, crop) — this tool only generates.
+- User wants pixel-perfect edits like resize, recolor, or crop — use a dedicated image library, not generative AI.
 - User wants to modify an established icon system that already has a defined visual language in the repo — extend the existing system instead.
 - The repo has its own image-generation tooling (e.g. a Fooocus MCP server, a different codex wrapper) — prefer that.
 
 ## How to invoke
 
+`generate` mode (default — the `generate` subcommand keyword may be omitted):
+
 ```bash
-node <<SCRIPT_PATH>> \
+node <<SCRIPT_PATH>> [generate] \
   ( --style "<style prompt>" | --style-file <path> ) \
   ( --subject "<subject prompt>" | --subject-file <path> ) \
   [--generate N] \
@@ -34,12 +37,36 @@ node <<SCRIPT_PATH>> \
   [--debug]
 ```
 
+`edit` mode:
+
+```bash
+node <<SCRIPT_PATH>> edit \
+  --reference <path> [--reference <path>...] \
+  ( --instruction "<text>" | --instruction-file <path> ) \
+  [--generate N] \
+  [--select M] \
+  [--name SLUG] \
+  [--out DIR] \
+  [--debug]
+```
+
 ### Parameters
+
+#### `generate` mode
 
 - `--style` (required if `--style-file` not given). Inline style prompt — describes the visual treatment: medium, lighting, palette, line weight, level of detail. Example: `"photorealistic studio product photo, soft lighting, neutral background"`, `"flat vector cartoon, thick black outlines, vibrant flat color, no gradients"`, `"oil painting, dramatic chiaroscuro, baroque, muted earth tones"`.
 - `--style-file` (required if `--style` not given; mutually exclusive with `--style`). Path to a UTF-8 text file containing the style prompt. Use this for long multi-line style guides (e.g. a coherent visual language for an asset family) that don't shell-escape cleanly. Trailing whitespace is trimmed; internal newlines are preserved.
 - `--subject` (required if `--subject-file` not given). Inline subject prompt — describes what to depict, including any composition / framing / background notes. Be specific. Example: `"two metal swords crossed in an X, transparent background, centered, no scene"`. If you want transparency, say so — codex's default is to use chroma-key removal.
 - `--subject-file` (required if `--subject` not given; mutually exclusive with `--subject`). Path to a UTF-8 text file containing the subject prompt. Same trimming rules as `--style-file`.
+
+#### `edit` mode
+
+- `--reference` (required, repeatable). Path to a reference image (`.png`, `.jpg`, `.jpeg`, `.webp`). Each reference is staged into the codex working directory at `references/<basename>` so codex can read it. If two references share a basename, the second is auto-suffixed (`cat.png`, `cat-2.png`) and a warning is emitted — use the staged name in your `--instruction`. Duplicate paths are deduped silently.
+- `--instruction` (required if `--instruction-file` not given). Free-form text describing what to do with the reference image(s). Reference files in this text by `@<staged-basename>`, e.g. `"Render the character of @alien.png in the pose of @pose.png"`. `@`-tokens are validated against the staged set up-front — typos exit before spawning codex with a helpful "did you mean…" message. Tokens not used by codex (passed but never `@`-mentioned) emit a warning.
+- `--instruction-file` (required if `--instruction` not given; mutually exclusive with `--instruction`). Path to a UTF-8 text file containing the instruction. Same trimming rules as `--style-file`. Useful for long multi-step transformation briefs.
+
+#### Common (both modes)
+
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run that would overwrite an existing file, the tool falls back to a sessionId-disambiguated name and emits a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.
@@ -53,6 +80,7 @@ JSON on stdout. Always inspect the result.
 ```json
 {
   "ok": true,
+  "mode": "generate",
   "generated": { "count": 4, "paths": [] },
   "selected": {
     "count": 2,
@@ -66,6 +94,22 @@ JSON on stdout. Always inspect the result.
   "workdir":   "/abs/cwd/.codex-image-gen-tmp/<sessionId>",
   "warnings": [],
   "durationMs": 345264
+}
+```
+
+In `edit` mode the JSON adds two extra fields:
+
+```json
+{
+  "mode": "edit",
+  "references": [
+    { "source": "/abs/path/alien.png", "staged": "alien.png", "referenced": true },
+    { "source": "/abs/path/pose.png",  "staged": "pose.png",  "referenced": true }
+  ],
+  "instruction": {
+    "raw":      "Match the character of @alien.png in the pose of @pose.png.",
+    "resolved": "Match the character of references/alien.png in the pose of references/pose.png."
+  }
 }
 ```
 
@@ -87,13 +131,21 @@ The tool copies selected files into the persistent output dir (default `./codex-
 - Quota: image turns burn ChatGPT subscription quota at 3-5x the rate of text turns, on a 5-hour rolling window plus a weekly cap. Be deliberate. Do not regenerate on every CI build — these are committed artifacts, not regenerable assets.
 - Uses `gpt-image-2`. Fast variants (`quality=low`) are not exposed via this tool — codex picks quality automatically.
 
-## Style prompt tips
+## Style prompt tips (`generate` mode)
 
 - Be explicit about medium ("photorealistic", "flat vector", "watercolor", "3D render").
 - Be explicit about lighting if it matters ("soft studio lighting", "dramatic rim light", "no lighting, flat color").
 - For game icons, include "transparent background" and "centered, no scene clutter".
 - For repeat-use asset families (e.g. faction emblems for a 4X game), keep the style prompt identical across calls to maintain visual coherence; vary only the subject prompt.
 - For batch generation with selection, lean toward briefs that genuinely have multiple valid interpretations — otherwise codex's variants will be near-duplicates and the review step adds little.
+
+## Instruction tips (`edit` mode)
+
+- Be explicit about which reference contributes what. The model sees the references, but a bare "blend these" leaves too much room. Say "match the EXACT character and style from @alien.png; match the POSE ONLY from @pose.png" — capitals and "ONLY" act as soft constraints.
+- The `@<basename>` substitution is verbatim — `@alien.png` becomes the staged path codex sees. You can also reference files in prose without `@` (codex will still see them in the working directory) but the validator can't catch typos that way, so prefer `@`.
+- Consistent character work: pass the canonical reference image once, vary only the instruction (different pose, different expression). This is the most reliable way to get a coherent character set without retraining or fine-tuning.
+- The model is good at character + pose recombination. It is less reliable at fine animation-frame consistency (subtle frame-to-frame drift). For animation, use it as a starting point, not a finisher.
+- Don't pass references you don't intend to `@`-mention — they trigger an "unreferenced" warning and codex may still pull from them in unintended ways.
 
 ## Failure modes
 
