@@ -326,3 +326,38 @@ test('62. edit-mode --help exits 0 with usage on stdout (mentions edit subcomman
   assert.match(r.stdout, /--reference/);
   assert.match(r.stdout, /--instruction/);
 });
+
+// Tests 64 + 65 are source-inspection guards. We can't deterministically
+// trigger the staging-failure path or the last-resort main().catch from
+// out-of-process in a portable way (would require sub-millisecond TOCTOU
+// races, cross-platform permission tweaks, or NUL-byte argv smuggling that
+// spawn filters out). The guards fail loudly if a future refactor drops
+// the try/catch around stageReferences or narrows the JSON shape emitted
+// from the top-level catch.
+
+test('64. staging failure routes through buildResult (source guard)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join } = await import('node:path');
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'codex-image-gen.mjs'),
+    'utf8',
+  );
+  assert.match(src, /try\s*\{\s*stageReferences\(/, 'stageReferences must be wrapped in try/catch');
+  assert.match(src, /failed to stage references/, 'staging-failure error must thread through buildResult');
+});
+
+test('65. top-level catch JSON includes mode + outputDir (source guard)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join } = await import('node:path');
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'codex-image-gen.mjs'),
+    'utf8',
+  );
+  const m = src.match(/main\(\)\.catch\(\(e\) => \{([\s\S]*?)\n\}\);/);
+  assert.ok(m, 'expected to locate main().catch handler');
+  const body = m[1];
+  assert.match(body, /\bmode:/, 'top-level catch must include mode field');
+  assert.match(body, /\boutputDir:/, 'top-level catch must include outputDir field');
+});

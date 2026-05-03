@@ -80,6 +80,14 @@ node ~/.codex-image-gen/codex-image-gen.mjs generate \
   --select 2
 ```
 
+The `generate` keyword is optional — flag-only invocations from 0.2.x still work:
+
+```bash
+node ~/.codex-image-gen/codex-image-gen.mjs \
+  --style "..." \
+  --subject "..."
+```
+
 Windows PowerShell — `~` does not expand in arguments, use `$env:USERPROFILE` (or the absolute path):
 
 ```powershell

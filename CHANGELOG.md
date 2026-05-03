@@ -27,9 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Live-smoke coverage for edit mode (gated on `TEST_LIVE=1`).
 
 ### Changed
-- The single-file runtime is now ~600 lines (was ~370) to accommodate the
-  edit subcommand. Both subcommands share spawn / scan / copy / cleanup; only
-  prompt synthesis and (in edit mode) reference staging differ.
+- The single-file runtime grew to accommodate the edit subcommand. Both
+  subcommands share spawn / scan / copy / cleanup; only prompt synthesis and
+  (in edit mode) reference staging differ.
+- Per-mode arg parsing now rejects unknown flags with a clear "unknown
+  argument X for Y mode" error instead of silently ignoring them. This is a
+  minor behavior change from 0.2.x which silently ignored typos; intent is
+  to surface mistakes early. Pass `--help` to see the current per-mode flag
+  set.
 
 ## [0.2.0] - 2026-05-02
 

@@ -310,7 +310,6 @@ function resolveInstructionTokens(instruction, stagingEntries) {
   const tokens = new Set();
   let m;
   while ((m = AT_TOKEN_RE.exec(instruction)) !== null) tokens.add(m[1]);
-  AT_TOKEN_RE.lastIndex = 0;
   const unknown = [];
   for (const t of tokens) {
     if (stagedSet.has(t)) stagedSet.get(t).referenced = true;
@@ -540,7 +539,22 @@ async function main() {
         warnings.push(`reference ${e.staged} was not @-mentioned in --instruction; codex may ignore it`);
       }
     }
-    stageReferences(stagingEntries, join(tmpOutputDir, 'references'));
+    try {
+      stageReferences(stagingEntries, join(tmpOutputDir, 'references'));
+    } catch (e) {
+      // A staging failure (disk full, dest perms, source vanished mid-run)
+      // means codex can't see the references the instruction depends on;
+      // there's no graceful degradation. Emit ok=false through buildResult so
+      // the JSON keeps its documented edit-mode shape (mode, references[],
+      // instruction.{raw,resolved}) — invaluable for debugging.
+      return emit(buildResult({
+        ok: false, args, stagingEntries, instructionResolved,
+        generatedPaths: [], persistentSelectedPaths: [],
+        persistentOutputDir, sessionDir, warnings, cleanedUp: false,
+        error: `failed to stage references: ${e.message}`,
+        durationMs: Date.now() - start,
+      }), 1);
+    }
     prompt = buildEditPrompt(args, tmpOutputDir, instructionResolved, stagingEntries);
   } else {
     prompt = buildGeneratePrompt(args, tmpOutputDir);
@@ -665,13 +679,20 @@ async function main() {
 }
 
 main().catch((e) => {
+  // Last-resort catch: only fires for unexpected exceptions inside main()
+  // that escape the in-flow error handling above (today, every known failure
+  // routes through emit(buildResult(...), 1) which preserves the documented
+  // shape). We don't have args here, so mode is "unknown"; everything else
+  // matches the documented contract so callers can still parse the JSON.
   emit({
     ok: false,
+    mode: 'unknown',
     generated: { count: 0, paths: [] },
     selected: { count: 0, paths: [], expected: 0 },
+    outputDir: '',
     workdir: '',
     warnings: [],
-    error: e.message,
+    error: `unhandled: ${e.message}`,
     durationMs: 0,
   }, 1);
 });

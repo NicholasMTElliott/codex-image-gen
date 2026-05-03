@@ -9,7 +9,7 @@
 
 ## Constraints
 - **Zero npm deps.** Adding any is a non-starter without explicit approval.
-- **Single-file runtime.** The wrapper is one `.mjs`, currently ~600 lines after edit-mode addition. Keep both subcommands in this single file rather than splitting.
+- **Single-file runtime.** The wrapper is one `.mjs`. Keep both subcommands in this single file rather than splitting; size is allowed to grow as long as it stays comprehensible.
 - **Env hygiene.**
   - DELETE `OPENAI_API_KEY` from the spawned env (forces ChatGPT-subscription billing).
   - DO NOT override `CODEX_HOME` (codex auth lives there).
