@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-03
+
 ### Added
 - `edit` subcommand modifies or combines reference image(s) per a free-form
   `--instruction`. Pass one or more `--reference <path>` flags; each is staged
@@ -86,6 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.claude/settings.json` `permissions.allow`.
 - Zero npm dependencies; Node 18+.
 
+[0.3.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.2.0...release/v0.3.0
 [0.2.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.1.1...release/v0.2.0
 [0.1.1]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.1.0...release/v0.1.1
 [0.1.0]: https://github.com/NicholasMTElliott/codex-image-gen/releases/tag/release/v0.1.0
