@@ -14,6 +14,7 @@ Wrap `codex exec --full-auto` so an agent can request N variants and optionally 
 
 ### `generate` mode inputs
 - `--style` / `--style-file` (visual treatment, inline or from file), `--subject` / `--subject-file` (what to depict, inline or from file). The `*-file` variants are mutually exclusive with their inline counterparts; useful for long multi-line briefs that don't shell-escape cleanly.
+- `--aspect` (default `square`) — picks one of gpt-image-2's three supported sizes: `square` (1024×1024), `portrait` (1024×1536), `landscape` (1536×1024). The keyword + pixel target are pasted into the codex prompt so the request routes to the right size; surfaced in the JSON output as `aspect: { name, width, height }`. Same flag works in `edit` mode.
 
 ### `edit` mode inputs
 - `--reference <path>` (required, repeatable) — paths to reference images (.png/.jpg/.jpeg/.webp). Each is staged into `<sessionDir>/output/references/<basename>`. Basename collisions auto-suffix to `-2`, `-3`, … and warn. Duplicate paths dedup silently with a warning.
@@ -27,7 +28,7 @@ Wrap `codex exec --full-auto` so an agent can request N variants and optionally 
 - Selection: when `select < generate`, codex reviews variants and copies chosen ones into `output/selected/`. When `select == generate`, no review step.
 - Persistence: selected files copied to `<persistentOutputDir>/<filename>`. Default dir is `<cwd>/codex-image-gen-output/` (override with `--out`, relative or absolute). Default filename is `<sessionId>-<basename>` (sessionId prefix prevents cross-run collisions). With `--name SLUG`, filename is `<slug>.png` when select=1 or `<slug>-<n>.png` when select>1; on collision with an existing file, falls back to `<slug>-<sessionId>[.|-<n>].png` and warns (preserves prior keepers).
 - Cleanup: tmp session dir (`./.codex-image-gen-tmp/<sessionId>/`) removed on success unless `--debug`. Failures preserve tmp regardless.
-- Output: machine-readable JSON on stdout — `ok`, `mode` (`"generate"` or `"edit"`), `generated.{count,paths}`, `selected.{count,paths,expected}`, `outputDir`, `workdir`, `warnings`, `durationMs`. `edit` mode adds `references[]` (each `{source,staged,referenced}`) and `instruction.{raw,resolved}`. After cleanup `generated.paths` is empty (would be stale tmp paths); `selected.paths` always points to the persistent output dir.
+- Output: machine-readable JSON on stdout — `ok`, `mode` (`"generate"` or `"edit"`), `generated.{count,paths}`, `selected.{count,paths,expected}`, `outputDir`, `workdir`, `aspect.{name,width,height}`, `warnings`, `durationMs`. `edit` mode adds `references[]` (each `{source,staged,referenced}`) and `instruction.{raw,resolved}`. After cleanup `generated.paths` is empty (would be stale tmp paths); `selected.paths` always points to the persistent output dir.
 
 ## UX expectations
 - Two cwd-relative dirs by default: `./.codex-image-gen-tmp/<sessionId>/` (interim, auto-deleted on success) and `./codex-image-gen-output/` (persistent finals, accumulates across runs — override with `--out`). Caller is responsible for moving keepers out (unless `--out` already points at the asset folder) and adding both to `.gitignore`.

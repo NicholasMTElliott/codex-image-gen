@@ -78,3 +78,10 @@ test('5e. --style-file with whitespace-only content is rejected as empty', async
   assert.equal(r.code, 2);
   assert.match(r.stderr, /is empty/);
 });
+
+test('5f. --aspect with invalid value is rejected with allowed list', async () => {
+  const r = await runTool(['--style', 's', '--subject', 'x', '--aspect', 'wide']);
+  assert.equal(r.code, 2);
+  assert.match(r.stderr, /--aspect must be one of: square, portrait, landscape/);
+  assert.match(r.stderr, /got "wide"/);
+});

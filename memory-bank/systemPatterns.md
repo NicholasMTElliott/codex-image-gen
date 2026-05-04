@@ -49,6 +49,11 @@ edit mode adds references[] and instruction.{raw,resolved})
 - **Cleanup-on-success default.** On `ok && !--debug`, `rmSync(sessionDir, {recursive:true, force:true})` runs before emit. Failed runs (`ok===false`) preserve tmp unconditionally so the user can investigate. Cleanup failures are non-fatal — recorded as a warning, the run still reports `ok:true`.
 - **Stale-path elision.** After cleanup, the JSON's `generated.paths` is `[]` rather than the tmp paths that no longer exist. `generated.count` still reports what codex produced. `selected.paths` always points to the surviving persistent copies.
 
+### Aspect-ratio handling (generate / edit)
+- **`ASPECT_DIMENSIONS` constant** maps `square|portrait|landscape` → `{w,h}` pairs (the only three sizes `gpt-image-2` supports). `--aspect` defaults to `square` so existing 0.3.x callers keep working unchanged.
+- **Prompt phrasing:** `"Render the image in <aspect> aspect ratio (<W>x<H> pixels)."` is inserted as the second line of both generate and edit prompts (right under the "use image_gen" line, above the brief). Phrasing is verbose-by-design — codex routes to the right size more reliably when both the keyword *and* the pixel target are present.
+- **JSON surface:** `aspect: { name, width, height }` block in the result. Lets callers re-derive the size without re-parsing the prompt and provides an audit trail for the chosen size.
+
 ### Edit-mode-specific design choices
 - **Stage references via copy, not `codex exec -i`.** Empirical finding: codex's `image_gen` tool reads files inside its working directory, but the `-i path/to/file` flag does not reliably surface external files into that workspace. Copying each `--reference` into `<sessionDir>/output/references/<basename>` is portable across operating systems (no Windows symlink-permission issues, no same-filesystem constraint of hardlinks) and the disk overhead is trivial since references are deleted with the rest of tmp on success.
 - **References staged into a `references/` subdir, not the cd root.** `listImages(<tmpOutputDir>)` is non-recursive and only counts files in the cd root — the subdir keeps reference files from being miscounted as generated outputs. Codex's own outputs land at `<tmpOutputDir>/variant-N.png` and the (optional) `<tmpOutputDir>/selected/` subfolder, alongside `<tmpOutputDir>/references/`.

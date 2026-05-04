@@ -54,6 +54,15 @@ process.on('warning', (w) => {
 });
 
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
+
+// gpt-image-2 only supports these three sizes. Each --aspect value maps 1:1
+// to a (width, height) pair; we paste both the keyword and the pixel pair
+// into the prompt so codex routes the request to the correct size.
+const ASPECT_DIMENSIONS = {
+  square:    { w: 1024, h: 1024 },
+  portrait:  { w: 1024, h: 1536 },
+  landscape: { w: 1536, h: 1024 },
+};
 // @-token grammar in --instruction: same charset as --name (filename-safe).
 // The capture requires the last char to be non-dot so trailing prose
 // punctuation (e.g. "@pose.png." at end of sentence) isn't sucked into the
@@ -92,6 +101,7 @@ function parseGenerateArgs(argv) {
   let debug = false;
   let name = '';
   let out = '';
+  let aspect = 'square';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -104,6 +114,7 @@ function parseGenerateArgs(argv) {
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
     else if (arg === '--name') { name = next ?? ''; i++; }
     else if (arg === '--out') { out = next ?? ''; i++; }
+    else if (arg === '--aspect') { aspect = (next ?? '').toLowerCase(); i++; }
     else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
     else { usageErr(`unknown argument "${arg}" for generate mode`); }
@@ -119,8 +130,9 @@ function parseGenerateArgs(argv) {
 
   if (!style || !subject) { printUsage(process.stderr); process.exit(2); }
   validateCommonArgs({ generate, select, name });
+  validateAspect(aspect);
 
-  return { mode: 'generate', style, subject, generate, select, debug, name, out };
+  return { mode: 'generate', style, subject, generate, select, debug, name, out, aspect };
 }
 
 function parseEditArgs(argv) {
@@ -132,6 +144,7 @@ function parseEditArgs(argv) {
   let debug = false;
   let name = '';
   let out = '';
+  let aspect = 'square';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -143,6 +156,7 @@ function parseEditArgs(argv) {
     else if (arg === '--select') { select = parseInt(next ?? '', 10); i++; }
     else if (arg === '--name') { name = next ?? ''; i++; }
     else if (arg === '--out') { out = next ?? ''; i++; }
+    else if (arg === '--aspect') { aspect = (next ?? '').toLowerCase(); i++; }
     else if (arg === '--debug') { debug = true; }
     else if (arg === '-h' || arg === '--help') { printUsage(process.stdout); process.exit(0); }
     else { usageErr(`unknown argument "${arg}" for edit mode`); }
@@ -156,8 +170,9 @@ function parseEditArgs(argv) {
     if (!r) usageErr('--reference requires a path argument');
   }
   validateCommonArgs({ generate, select, name });
+  validateAspect(aspect);
 
-  return { mode: 'edit', references, instruction, generate, select, debug, name, out };
+  return { mode: 'edit', references, instruction, generate, select, debug, name, out, aspect };
 }
 
 function validateCommonArgs({ generate, select, name }) {
@@ -167,6 +182,13 @@ function validateCommonArgs({ generate, select, name }) {
   // Restrict to filename-safe chars to block path traversal and shell-meta
   // surprises. Users who want arbitrary paths can use --out instead.
   if (name && !/^[A-Za-z0-9._-]+$/.test(name)) usageErr('--name must contain only letters, digits, ., _, -');
+}
+
+function validateAspect(aspect) {
+  if (!Object.prototype.hasOwnProperty.call(ASPECT_DIMENSIONS, aspect)) {
+    const allowed = Object.keys(ASPECT_DIMENSIONS).join(', ');
+    usageErr(`--aspect must be one of: ${allowed} (got "${aspect}")`);
+  }
 }
 
 function usageErr(msg) {
@@ -199,11 +221,13 @@ function printUsage(stream = process.stderr) {
   node codex-image-gen.mjs [generate] (--style "<text>" | --style-file <path>)
                                       (--subject "<text>" | --subject-file <path>)
                                       [--generate N] [--select M]
+                                      [--aspect square|portrait|landscape]
                                       [--name SLUG] [--out DIR] [--debug]
 
   node codex-image-gen.mjs edit --reference <path> [--reference <path>...]
                                 (--instruction "<text>" | --instruction-file <path>)
                                 [--generate N] [--select M]
+                                [--aspect square|portrait|landscape]
                                 [--name SLUG] [--out DIR] [--debug]
 
 The "generate" subcommand may be omitted (it is the default).
@@ -235,6 +259,14 @@ Common (both modes):
   --select     Number of variants to keep (default: 1; must be <= generate)
                When select < generate, codex reviews the variants and picks
                the strongest. When select == generate, no review step runs.
+  --aspect     Output aspect ratio (default: square). Maps to gpt-image-2's
+               three supported sizes:
+                 square    -> 1024x1024
+                 portrait  -> 1024x1536
+                 landscape -> 1536x1024
+               The keyword + pixel target are pasted into the codex prompt
+               so the request routes to the correct size. Surfaced in JSON
+               output as 'aspect: { name, width, height }'.
   --name       Output filename slug. With --name foo and select=1 the
                persistent file is "foo.png"; with select>1 it's "foo-1.png",
                "foo-2.png", ... If a target filename already exists, falls
@@ -346,12 +378,14 @@ function stageReferences(entries, refsDir) {
 // ---------- prompt synthesis ----------
 
 function buildGeneratePrompt(args, outDir) {
-  const { style, subject, generate, select } = args;
+  const { style, subject, generate, select, aspect } = args;
+  const dims = ASPECT_DIMENSIONS[aspect];
   // Posix-style path for the prompt — codex normalizes either, but forward
   // slashes avoid backslash-escape ambiguity in its tool-call parsing.
   const outDirP = outDir.replace(/\\/g, '/');
   const lines = [
     `Please generate ${generate} bitmap raster image${generate > 1 ? 's' : ''} (PNG) using your built-in image_gen tool.`,
+    `Render ${generate > 1 ? 'each image' : 'the image'} in ${aspect} aspect ratio (${dims.w}x${dims.h} pixels).`,
     `This is for an asset; output must be a bitmap, not SVG or code.`,
     ``,
     `Brief:`,
@@ -384,11 +418,13 @@ function buildGeneratePrompt(args, outDir) {
 }
 
 function buildEditPrompt(args, outDir, resolvedInstruction, stagingEntries) {
-  const { generate, select } = args;
+  const { generate, select, aspect } = args;
+  const dims = ASPECT_DIMENSIONS[aspect];
   const outDirP = outDir.replace(/\\/g, '/');
   const refList = stagingEntries.map((e) => `  - references/${e.staged}`).join('\n');
   const lines = [
     `Please generate ${generate} bitmap raster image${generate > 1 ? 's' : ''} (PNG) using your built-in image_gen tool, derived from the reference image(s) below per the instructions.`,
+    `Render ${generate > 1 ? 'each image' : 'the image'} in ${aspect} aspect ratio (${dims.w}x${dims.h} pixels).`,
     `This is for an asset; output must be a bitmap, not SVG or code.`,
     ``,
     `Reference images available in your working directory:`,
@@ -500,6 +536,10 @@ function buildResult(state) {
     }));
     r.instruction = { raw: args.instruction, resolved: instructionResolved };
   }
+  // Surface aspect + the actual pixel dimensions in the JSON so callers can
+  // see exactly what was requested without re-parsing the prompt.
+  const aspectDims = ASPECT_DIMENSIONS[args.aspect];
+  r.aspect = { name: args.aspect, width: aspectDims.w, height: aspectDims.h };
   if (error) r.error = error;
   return r;
 }

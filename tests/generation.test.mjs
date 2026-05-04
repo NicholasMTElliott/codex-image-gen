@@ -12,6 +12,8 @@ test('6. single-image happy path: ok=true, 1 selected, paths absolute and in per
   assert.equal(r.json.generated.count, 1);
   assert.equal(r.json.selected.count, 1);
   assert.equal(r.json.selected.expected, 1);
+  // Default aspect = square; aspect block surfaces in JSON.
+  assert.deepEqual(r.json.aspect, { name: 'square', width: 1024, height: 1024 });
   // Persistent path is in <cwd>/codex-image-gen-output/
   const expectedDir = join(r.cwd, 'codex-image-gen-output');
   assert.equal(r.json.outputDir, expectedDir);
@@ -19,6 +21,55 @@ test('6. single-image happy path: ok=true, 1 selected, paths absolute and in per
   assert.ok(isAbsolute(selected));
   assert.ok(selected.startsWith(expectedDir), `selected path should be inside persistent output dir: ${selected}`);
   assert.ok(existsSync(selected), 'selected file should exist on disk');
+});
+
+test('6a. --aspect portrait: prompt + JSON reflect 1024x1536', async () => {
+  const r = await runTool([
+    '--style', 's', '--subject', 'x',
+    '--aspect', 'portrait',
+    '--debug',
+  ]);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+  assert.deepEqual(r.json.aspect, { name: 'portrait', width: 1024, height: 1536 });
+  const meta = readFakeCodexMeta(r.json.workdir);
+  assert.match(meta.prompt, /portrait aspect ratio \(1024x1536 pixels\)/);
+});
+
+test('6b. --aspect landscape: prompt + JSON reflect 1536x1024', async () => {
+  const r = await runTool([
+    '--style', 's', '--subject', 'x',
+    '--aspect', 'landscape',
+    '--debug',
+  ]);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.json.aspect, { name: 'landscape', width: 1536, height: 1024 });
+  const meta = readFakeCodexMeta(r.json.workdir);
+  assert.match(meta.prompt, /landscape aspect ratio \(1536x1024 pixels\)/);
+});
+
+test('6c. --aspect default (square): prompt explicitly mentions square + 1024x1024', async () => {
+  const r = await runTool(['--style', 's', '--subject', 'x', '--debug']);
+  assert.equal(r.code, 0);
+  const meta = readFakeCodexMeta(r.json.workdir);
+  assert.match(meta.prompt, /square aspect ratio \(1024x1024 pixels\)/);
+});
+
+test('6d. --aspect plumbs into edit-mode prompt + JSON', async () => {
+  const refsDir = mktempDir('cig-aspect-edit-');
+  const ref = join(refsDir, 'thing.png');
+  writeFileSync(ref, Buffer.from([0x89, 0x50, 0x4E, 0x47]));
+  const r = await runTool([
+    'edit',
+    '--reference', ref,
+    '--instruction', 'use @thing.png',
+    '--aspect', 'landscape',
+    '--debug',
+  ]);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.json.aspect, { name: 'landscape', width: 1536, height: 1024 });
+  const meta = readFakeCodexMeta(r.json.workdir);
+  assert.match(meta.prompt, /landscape aspect ratio \(1536x1024 pixels\)/);
 });
 
 test('7. --generate 4 --select 2: 2 selected files in persistent output dir, sessionId-prefixed', async () => {

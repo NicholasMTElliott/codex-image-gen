@@ -138,6 +138,7 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
 
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
+- `--aspect` (optional, default `square`). Output aspect ratio. Maps 1:1 to gpt-image-2's three supported sizes — `square` → 1024×1024, `portrait` → 1024×1536, `landscape` → 1536×1024. The keyword + pixel target are pasted into the codex prompt so the request routes to the correct size; the chosen aspect is surfaced in the JSON output as `aspect: { name, width, height }`.
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run that would overwrite, the tool falls back to a sessionId-disambiguated name and emits a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
 - `--out` (optional). Persistent output directory (relative to cwd, or absolute). Default `./codex-image-gen-output/`. Combine with `--name` to drop selected images straight into a project's asset folder.
 - `--debug` (optional flag). Keep the per-session tmp work dir after a successful run. Default behavior cleans it up to minimize disk impact. Failed runs always preserve tmp regardless of this flag.
@@ -159,6 +160,7 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
   },
   "outputDir": "/abs/cwd/codex-image-gen-output",
   "workdir":   "/abs/cwd/.codex-image-gen-tmp/<sessionId>",
+  "aspect":    { "name": "square", "width": 1024, "height": 1024 },
   "warnings": [],
   "durationMs": 345264
 }

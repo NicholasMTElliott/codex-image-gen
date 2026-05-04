@@ -69,6 +69,7 @@ node <<SCRIPT_PATH>> edit \
 
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
+- `--aspect` (optional, default `square`). Output aspect ratio: `square` (1024×1024), `portrait` (1024×1536), `landscape` (1536×1024). These are the only sizes gpt-image-2 supports; pick by composition. The keyword + pixel target are pasted into the prompt and surfaced in the JSON output (`aspect: { name, width, height }`).
 - `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run that would overwrite an existing file, the tool falls back to a sessionId-disambiguated name and emits a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.
 - `--out` (optional). Override the persistent output directory. Default `./codex-image-gen-output/` (relative to caller cwd). Pass an absolute path or a path relative to cwd to drop selected images straight into the project's asset folder, e.g. `--out assets/icons` or `--out /abs/path/to/assets`. The directory is created if missing.
 - `--debug` (optional flag). Keep the per-session tmp work dir on success. Default cleans it up to minimize disk impact. Failures always preserve tmp regardless. Only set this when you intend to inspect interim files.
@@ -92,6 +93,7 @@ JSON on stdout. Always inspect the result.
   },
   "outputDir": "/abs/cwd/codex-image-gen-output",
   "workdir":   "/abs/cwd/.codex-image-gen-tmp/<sessionId>",
+  "aspect":    { "name": "square", "width": 1024, "height": 1024 },
   "warnings": [],
   "durationMs": 345264
 }

@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--aspect square|portrait|landscape` flag for `generate` and `edit` modes
+  (default `square`). Maps 1:1 to gpt-image-2's only supported sizes
+  (1024×1024, 1024×1536, 1536×1024); the keyword and pixel target are
+  pasted into the codex prompt so the request routes to the right size,
+  and the chosen aspect surfaces in JSON output as `aspect: { name,
+  width, height }`.
+
 ## [0.3.0] - 2026-05-03
 
 ### Added
