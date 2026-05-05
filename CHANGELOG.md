@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-05
+
 ### Added
 - `--aspect square|portrait|landscape` flag for `generate` and `edit` modes
   (default `square`). Maps 1:1 to gpt-image-2's only supported sizes
@@ -13,6 +15,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pasted into the codex prompt so the request routes to the right size,
   and the chosen aspect surfaces in JSON output as `aspect: { name,
   width, height }`.
+- Multi-target install. The installer now owns a `TARGETS` registry and drops
+  the rendered SKILL.md into every supported coding-agent harness's
+  user-global skills dir, not just Claude Code. Adding a new harness is one
+  registry entry plus a test case. Current targets:
+  - `claude` — `~/.claude/skills/codex-image-gen/SKILL.md` + `permissions.allow`
+    patch in `~/.claude/settings.json` (default-on; preserves historical
+    behaviour).
+  - `opencode` — `~/.config/opencode/skills/codex-image-gen/SKILL.md`
+    (auto-detected via `~/.config/opencode/`; opencode is permissive by default,
+    no settings patch).
+  - `cline` — `~/.cline/skills/codex-image-gen/SKILL.md` (auto-detected via
+    `~/.cline/`; uses Cline's user-global Skills system, no allowlist needed).
+  - `cursor` — `~/.cursor/skills/codex-image-gen/SKILL.md` (auto-detected via
+    `~/.cursor/`; Cursor reads its own dir plus compatibility paths
+    `~/.claude/skills/` and `~/.codex/skills/`).
+  - `agents` — `~/.agents/skills/codex-image-gen/SKILL.md`. Cross-harness
+    shared dir read by Cursor + opencode. **Explicit-only** (`--target=agents`
+    or `--all`) — never auto-installed even when `~/.agents/` exists, since
+    that would duplicate the per-harness installs in harnesses that read both
+    paths.
+- Installer flags: `--target=<csv>` (explicit list, overrides detection),
+  `--all` (every known target including explicit-only), `--no-<id>` (exclude
+  from default set), `--list-targets` (show registry + detection state and
+  exit). `--uninstall` now removes every known target's skill dir.
+- Phase-numbered progress output during install (`[1/4] Pre-flight`,
+  `[2/4] Resolve install targets`, `[3/4] Copy runtime tool`, `[4/4] Install
+  skill into target harnesses`). Pre-flight surfaces resolved `node` and
+  `codex` versions in the log so support requests can include them without
+  follow-up prompts. Per-target line shows why each target was included
+  (`detected` / `default-on` / `forced`).
+- Duplicate-warning during install when both the `agents` target and a
+  per-harness target that reads `~/.agents/skills/` are selected together
+  (`cursor`, `opencode`). Tells the user the skill will appear twice in those
+  harnesses' lists and suggests the `--no-<id>` flag to dedupe.
+
+### Changed
+- Installer: pre-flight checks (`node`, `codex`, `SKILL.md` template,
+  `codex-image-gen.mjs` runtime) now run before *any* filesystem mutation.
+  Previous order created `~/.codex-image-gen/` and copied the binary before
+  noticing a missing template, leaving a half-installed state on a broken
+  checkout. Pre-flight failures exit 1 with no side effects.
+- Installer: error/warning output is split between stderr (errors via
+  `ERROR:` prefix; advisory warnings unprefixed) and stdout (normal progress
+  + post-failure manual-fix instructions). Multi-line guidance no longer
+  repeats the `ERROR:` prefix on every line.
+- Installer: unexpected exceptions (e.g., a `mkdirSync` failure on a
+  permission issue) are caught at the top level and surfaced as a one-line
+  friendly error. Set `CIG_INSTALL_DEBUG=1` to see the full stack trace.
+- README and memory-bank docs reflect multi-target install behaviour.
+
+### Fixed
+- Installer: SKILL.md template rendering used `String.replace` with a string
+  replacement, which interprets `$&` / `$1` / `$$` as backreferences. If the
+  resolved install path ever contained a literal `$` (legal in Windows
+  usernames — service accounts often end in `$`), the rendered skill would
+  silently mangle. Now uses the function form of `replace` and verifies no
+  `<<…>>` placeholders remain in the rendered output before writing.
+- Installer: `--no-<id>` with a typo'd id (e.g. `--no-claud`) was silently
+  added to the exclusion set and matched no target — the user thought they
+  had excluded a target but the installer proceeded as if no `--no-` was
+  passed. Now validates `--no-<id>` against the known target ids and exits
+  2 with a clear error on unknown ids. Same validation applies to comma-
+  separated entries inside `--target=<csv>` and to empty `--target=`.
+- Installer: `patchSettings` write failures (typically an exclusive write
+  lock on Windows when Claude Code is running and holds `settings.json`)
+  no longer propagate as raw stack traces. They emit a clear `[skip]`
+  message naming the cause and prompting the user to quit Claude Code or
+  add the rule manually.
 
 ## [0.3.0] - 2026-05-03
 
@@ -96,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.claude/settings.json` `permissions.allow`.
 - Zero npm dependencies; Node 18+.
 
+[0.4.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.3.0...release/v0.4.0
 [0.3.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.2.0...release/v0.3.0
 [0.2.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.1.1...release/v0.2.0
 [0.1.1]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.1.0...release/v0.1.1

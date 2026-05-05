@@ -1,7 +1,7 @@
 {
   "name": "codex-image-gen",
-  "version": "0.3.0",
-  "description": "Portable Node CLI + Claude Code skill that wraps OpenAI's codex CLI for raster image generation against ChatGPT subscription billing (not API tokens).",
+  "version": "0.4.0",
+  "description": "Portable Node CLI + multi-harness skill (Claude Code, opencode, Cline, Cursor) that wraps OpenAI's codex CLI for raster image generation against ChatGPT subscription billing (not API tokens).",
   "type": "module",
   "license": "MIT",
   "author": "Nicholas Elliott",
