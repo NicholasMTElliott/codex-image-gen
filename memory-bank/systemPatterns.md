@@ -64,16 +64,34 @@ edit mode adds references[] and instruction.{raw,resolved})
 
 ## Component relationships
 - `codex-image-gen.mjs` — runtime. Pure: parse args → build prompt → spawn → scan → emit JSON.
-- `install.mjs` — one-shot installer. Verifies `node` + `codex` on PATH, copies the tool, renders SKILL.md, idempotently patches `~/.claude/settings.json` `permissions.allow` with the `Bash(node <SCRIPT_PATH> *)` rule.
-- `SKILL.md` — Claude Code skill template; tells the agent when to invoke and what arguments to pass. Two placeholders are rendered by the installer.
+- `install.mjs` — multi-target installer. Verifies `node` + `codex` on PATH, copies the tool to `~/.codex-image-gen/`, renders SKILL.md, then iterates a `TARGETS` registry to drop the rendered skill into each selected harness's user-global skills dir. For Claude Code, also idempotently patches `~/.claude/settings.json` `permissions.allow` with the `Bash(node <SCRIPT_PATH> *)` rule. opencode, Cline, and Cursor are permissive by default and get no settings patch. The `agents` cross-harness target is `explicitOnly: true` — it has a detectPath but is never auto-installed because writing to `~/.agents/skills/` plus a per-harness path would duplicate skill entries in harnesses that read both. Flags: `--target=<csv>` / `--all` / `--no-<id>` / `--list-targets` / `--uninstall`.
+- `SKILL.md` — Anthropic-style skill template (frontmatter: `name` + `description` + `allowed-tools`). Tells the agent when to invoke and what arguments to pass. Two placeholders (`<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>`) are rendered by the installer. The same rendered file is dropped into every selected target's user-global skills dir.
 
 ## Critical flows
 
-### Install
+### Install (multi-target)
+The installer is multi-target. It owns a `TARGETS` registry — each entry has `{id, label, skillDir, settingsPath, detectPath, defaultOn, explicitOnly?}`. To add a harness, add a registry entry (and a test). Current targets:
+- **`claude`** — `defaultOn: true`, settingsPath: `~/.claude/settings.json`.
+- **`opencode`** — `defaultOn: false`, settingsPath: `null`. opencode is permissive by default.
+- **`cline`** — `defaultOn: false`, settingsPath: `null`. Cline's user-global `~/.cline/skills/` Skills system; no allowlist.
+- **`cursor`** — `defaultOn: false`, settingsPath: `null`. Cursor's `~/.cursor/skills/` Skills system. (Cursor also reads `~/.claude/skills/` and `~/.codex/skills/` as compatibility paths, so the Claude install is already picked up — but we still write the cursor-specific path for explicitness.)
+- **`agents`** — `defaultOn: false`, `explicitOnly: true`. Cross-harness shared `~/.agents/skills/` dir (read by Cursor + opencode per their docs). Never auto-installed even when the detect path exists, because that would duplicate the per-harness installs in harnesses that read both locations. Only `--target=agents` or `--all` selects it.
+
+Resolution rules (mutually exclusive flag groups, highest precedence first):
+1. `--target=<csv>` — explicit list; install to exactly these, even if not detected. Skip the rest. This is the only way to install an `explicitOnly` target without using `--all`.
+2. `--all` — install to every target in the registry, including `explicitOnly` ones.
+3. Default — every target where `!explicitOnly && (defaultOn || detectPath exists)`. `--no-<id>` removes a target from the resulting set.
+
+Steps:
 1. Check `node --version` and `codex --version` succeed.
-2. Copy `codex-image-gen.mjs` and `README.md` → `~/.codex-image-gen/`.
-3. Render SKILL.md (replace `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>`) → `~/.claude/skills/codex-image-gen/SKILL.md`.
-4. Patch `permissions.allow` in `~/.claude/settings.json` (idempotent; falls back to printing the rule if JSON is malformed).
+2. Copy `codex-image-gen.mjs` and `README.md` → `~/.codex-image-gen/` (shared across all targets).
+3. Render SKILL.md once (replace `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>`).
+4. For each resolved target: `mkdirSync(skillDir, {recursive:true})`, write rendered SKILL.md.
+5. For targets with `settingsPath !== null`, run `patchClaudeSettings(settingsPath, allowRule)` (idempotent; falls back to printing the rule if JSON is malformed). Currently only Claude Code needs this — opencode, Cline, and Cursor allow external commands by default, and we don't write their config files (avoids creating configs the user didn't have).
+
+`--list-targets` prints the registry with detection state and exits without installing — useful for diagnostics.
+
+`--uninstall` removes the install dir plus every target's skill dir (any that exist). Settings files are left untouched — removing the allow rule is a manual op.
 
 ### Generate mode
 1. Parse args; resolve `--style-file`/`--subject-file` (mutually exclusive with their inline counterparts; UTF-8 read, `.trim()` to strip trailing newline, empty-after-trim is rejected); validate `select ≤ generate`, both positive integers; `--name` slug (if present) matches `[A-Za-z0-9._-]+`. `--debug` parsed as flag.

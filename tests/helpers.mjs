@@ -126,6 +126,31 @@ export function runInstaller(opts = {}) {
     .then((r) => ({ ...r, home }));
 }
 
+/**
+ * Like runInstaller but with extra escape hatches for diagnostic / regression
+ * tests:
+ *   - opts.installerPath: run a copy of install.mjs from a different dir (used
+ *     to test that pre-flight checks fire BEFORE filesystem mutations).
+ *   - opts.skipShim: don't prepend the fake-codex shim to PATH (used to test
+ *     the "codex not found" pre-flight error path).
+ *
+ * Tests should prefer runInstaller for normal happy-path behaviour; this is
+ * for the corner cases.
+ */
+export function runInstallerCustom(opts = {}) {
+  const home = opts.home ?? mktempDir('cig-home-');
+  const installerPath = opts.installerPath ?? INSTALL_PATH;
+  const baseEnv = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    ...(opts.env ?? {}),
+  };
+  if (!opts.skipShim) prependShim(baseEnv);
+  return spawnAndCapture(process.execPath, [installerPath, ...(opts.args ?? [])], { env: baseEnv })
+    .then((r) => ({ ...r, home }));
+}
+
 function spawnAndCapture(cmd, args, { cwd, env }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });

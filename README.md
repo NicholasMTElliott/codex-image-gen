@@ -1,10 +1,10 @@
 # codex-image-gen
 
-A small portable tool that lets Claude Code (or any CLI agent) generate or edit raster images by shelling out to OpenAI's `codex` CLI — billed against the user's ChatGPT subscription, not the API.
+A small portable tool that lets Claude Code, opencode, Cline, Cursor, or any CLI coding agent generate or edit raster images by shelling out to OpenAI's `codex` CLI — billed against the user's ChatGPT subscription, not the API.
 
 Two modes: `generate` synthesizes a new image from `--style` + `--subject` prompts; `edit` modifies or combines reference images per a free-form `--instruction` (apply a pose from one image to a character from another, produce variations of a character, etc.).
 
-Ships with a Claude Code skill so the agent knows when and how to invoke it.
+Ships with an Anthropic-style `SKILL.md` that the installer registers with each detected coding-agent harness (Claude Code, opencode, Cline, Cursor, …) so the agent knows when and how to invoke it.
 
 ## Why
 
@@ -17,8 +17,8 @@ For `edit` mode specifically: codex's `image_gen` tool can read existing PNGs th
 | File | Purpose |
 |------|---------|
 | `codex-image-gen.mjs` | The tool. Plain Node ESM, no npm dependencies. |
-| `install.mjs` | Cross-platform installer. Copies the tool to `~/.codex-image-gen/` and the skill to `~/.claude/skills/codex-image-gen/`. |
-| `SKILL.md` | Claude Code skill template. The installer fills in the resolved install path. |
+| `install.mjs` | Cross-platform installer. Copies the tool to `~/.codex-image-gen/` and registers the skill with each supported harness (Claude Code, opencode, Cline, Cursor). |
+| `SKILL.md` | Skill template (Anthropic frontmatter — `name` + `description` + `allowed-tools`). The installer fills in the resolved install path and drops the same rendered file into every target's user-global skills dir. |
 | `README.md` | This file. |
 
 ## Prerequisites
@@ -28,7 +28,13 @@ For `edit` mode specifically: codex's `image_gen` tool can read existing PNGs th
    - Install: see https://github.com/openai/codex for the current canonical install command on your platform.
    - Auth: `codex login` (uses ChatGPT account; opens a browser for OAuth).
 3. **A paid ChatGPT plan** (Plus, Pro, or Team). The free tier does not include image generation. Plus is workable for occasional use; Pro is recommended if you batch-generate assets.
-4. **Claude Code** (only needed if you want the skill auto-invoked from inside Claude Code).
+4. **A coding-agent harness** that reads SKILL.md (only needed if you want the skill auto-invoked from inside an agent). The installer detects and registers with whichever of these are present:
+   - **Claude Code** — skill at `~/.claude/skills/codex-image-gen/SKILL.md`, with a matching `Bash(...)` allow rule auto-patched into `~/.claude/settings.json`.
+   - **opencode** — skill at `~/.config/opencode/skills/codex-image-gen/SKILL.md`. opencode permits external commands by default, so no settings patch is needed.
+   - **Cline** — skill at `~/.cline/skills/codex-image-gen/SKILL.md` ([Cline's user-global Skills system](https://docs.cline.bot/customization/skills)). No settings patch is needed.
+   - **Cursor** — skill at `~/.cursor/skills/codex-image-gen/SKILL.md` ([Cursor's Skills system](https://cursor.com/docs/skills)). No settings patch is needed. (Cursor also reads `~/.claude/skills/` and `~/.codex/skills/` as compatibility paths, so an existing Claude install would already be picked up — but the installer writes to the cursor-specific path for clarity.)
+   - The installer always installs the skill for Claude Code (it's the historical default — most users running this installer have Claude Code) and adds opencode / Cline / Cursor opportunistically when their config dirs exist. Use `--target=` / `--all` / `--no-<id>` to override (see below).
+   - **Explicit-only target** — the installer also knows about `~/.agents/skills/`, a cross-harness shared dir read by Cursor and opencode. It is **never auto-installed** (would duplicate the per-harness installs into harnesses that read both paths). Pass `--target=agents` to use it intentionally, typically alongside `--no-cursor --no-opencode` to dedupe.
 
 `codex` image generation routes to subscription billing only when `OPENAI_API_KEY` is **not set** in the environment. The wrapper deletes that variable before spawning codex, so the user's shell can have the API key set for other purposes without breaking subscription routing for this tool.
 
@@ -56,9 +62,26 @@ node install.mjs
 ### What the installer does
 
 1. Verifies `node` and `codex` are on `PATH`.
-2. Copies `codex-image-gen.mjs` and `README.md` to `~/.codex-image-gen/`.
-3. Renders `SKILL.md` with the absolute install path baked in and writes it to `~/.claude/skills/codex-image-gen/SKILL.md`.
-4. Auto-patches the `permissions.allow` array in `~/.claude/settings.json` with the `Bash(...)` rule that pre-approves the tool for Claude Code (idempotent — safe to re-run; falls back to printing the rule if `settings.json` is malformed).
+2. Copies `codex-image-gen.mjs` and `README.md` to `~/.codex-image-gen/` (shared across all harnesses).
+3. Renders `SKILL.md` with the absolute install path baked in.
+4. For each selected target harness, drops the rendered SKILL.md into the harness's user-global skills dir:
+   - `~/.claude/skills/codex-image-gen/SKILL.md` (Claude Code)
+   - `~/.config/opencode/skills/codex-image-gen/SKILL.md` (opencode)
+   - `~/.cline/skills/codex-image-gen/SKILL.md` (Cline)
+   - `~/.cursor/skills/codex-image-gen/SKILL.md` (Cursor)
+   - `~/.agents/skills/codex-image-gen/SKILL.md` (cross-harness — explicit-only)
+5. For Claude Code, also auto-patches the `permissions.allow` array in `~/.claude/settings.json` with the `Bash(...)` rule that pre-approves the tool. Idempotent — safe to re-run; falls back to printing the rule if `settings.json` is malformed. opencode, Cline, and Cursor are permissive by default and get no settings patch.
+
+### Installer flags
+
+| Flag | Effect |
+|------|--------|
+| (none) | Auto-detect: install to Claude Code (always) plus any other detected harness (e.g. opencode if `~/.config/opencode/` exists, Cline if `~/.cline/` exists, Cursor if `~/.cursor/` exists). The `agents` target is never included by default — pass it explicitly. |
+| `--target=claude,opencode,cline,cursor` | Explicit list. Overrides detection — installs to exactly these targets, even if undetected. Skips any not listed. The only way to install to the `agents` target. |
+| `--all` | Install to every known target regardless of detection, including `agents`. Note that this can produce duplicate skill entries in Cursor and opencode (which read both their per-harness path and `~/.agents/skills/`); use `--no-cursor --no-opencode` if you want `agents` to be the canonical location. |
+| `--no-<id>` | Exclude a target from the default set, e.g. `--no-opencode` or `--no-cursor`. Combinable. |
+| `--list-targets` | Print the target table with detection state and exit without installing. Useful for diagnostics. The `agents` target shows as `explicit-only` so you can see at a glance that it won't auto-install. |
+| `--uninstall` | Remove the install dir plus every known target's skill dir. Settings files are left alone — remove allow rules manually if you want them gone. |
 
 To remove:
 
@@ -190,6 +213,20 @@ In `edit` mode, the JSON adds two extra fields:
 
 Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, basename-collision auto-suffix in `edit` mode, duplicate-reference dedup, copy/cleanup failures).
 
+## Using it from a coding-agent harness
+
+Once installed, **restart your agent** if it was already running — most harnesses load skills and settings only at startup. After that, just ask for an image in any project; the agent reads the skill description, decides it matches your request, and runs the tool for you.
+
+The same rendered `SKILL.md` is dropped into every target harness's skills dir, so the experience is identical from Claude Code, opencode, Cline, Cursor, or any other harness that reads Anthropic-style skill frontmatter (`name` + `description`). Harnesses that don't recognize the `allowed-tools` field simply ignore it.
+
+### Other coding-agent harnesses (not auto-registered)
+
+For harnesses without a user-global Skills system, register the tool manually per project:
+
+- **AGENTS.md-only harnesses** (Aider, Continue.dev, Windsurf, OpenAI Codex, Factory, etc.) — paste a short "Image generation tool available at: `~/.codex-image-gen/codex-image-gen.mjs`" block into your project-root `AGENTS.md`. The installer does **not** modify `AGENTS.md` automatically because it's typically checked in alongside the project and editing it without consent would be invasive.
+
+If your harness has a stable user-global skills directory and you'd like first-class support, please open an issue — adding a target is a single entry in the `TARGETS` registry in [install.mjs](install.mjs).
+
 ## Using it from Claude Code
 
 Once installed, **restart Claude Code** if it was already running — it loads skills and settings at startup. After that, just ask for an image in any project; Claude reads the skill description, decides it matches your request, and runs the tool for you.
@@ -224,7 +261,7 @@ git pull
 node install.mjs
 ```
 
-Either way, the installer is idempotent: re-running overwrites the installed copy in `~/.codex-image-gen/`, re-renders `SKILL.md`, and detects the existing allow rule in `~/.claude/settings.json` without duplicating it.
+Either way, the installer is idempotent: re-running overwrites the installed copy in `~/.codex-image-gen/`, re-renders the skill into every selected target's skills dir, and detects existing allow rules without duplicating them.
 
 ## Troubleshooting
 
@@ -241,10 +278,12 @@ If a manual run fails or the skill isn't being invoked, work down this list:
 
 3. **Quota exhausted** — codex returns a quota error. Wait for the 5-hour rolling window to reset, or upgrade your ChatGPT plan.
 
-4. **Skill not auto-invoked from Claude Code** — verify install state:
-   - `~/.claude/skills/codex-image-gen/SKILL.md` exists and contains an absolute path (no `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>` placeholders left from rendering).
-   - `~/.claude/settings.json`'s `permissions.allow` array contains a `Bash(node /abs/path/to/codex-image-gen.mjs *)` rule.
-   - **Restart Claude Code** if it was running when you installed — it doesn't hot-reload skills or settings.
+4. **Skill not auto-invoked from your agent** — verify install state. First, run `node install.mjs --list-targets` to see which harnesses the installer recognizes and whether each is detected on this machine. Then for each harness:
+   - Claude Code: `~/.claude/skills/codex-image-gen/SKILL.md` exists and contains an absolute path (no `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>` placeholders left). `~/.claude/settings.json`'s `permissions.allow` array contains a `Bash(node /abs/path/to/codex-image-gen.mjs *)` rule.
+   - opencode: `~/.config/opencode/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required (opencode is permissive by default).
+   - Cline: `~/.cline/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required.
+   - Cursor: `~/.cursor/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required. (If you used `--target=agents`, the file is at `~/.agents/skills/codex-image-gen/SKILL.md` instead and Cursor reads it from there too.)
+   - **Restart the agent** if it was running when you installed — most don't hot-reload skills or settings.
 
 5. **Worried about accidental API billing** — the wrapper strips `OPENAI_API_KEY` from the spawned env before invoking codex, so subscription routing is locked in regardless of what your shell has set. You can verify by running `codex` manually with the env var set vs unset and observing the billing route in codex's session log under `~/.codex/sessions/`.
 

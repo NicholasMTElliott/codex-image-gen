@@ -30,17 +30,25 @@
 ```bash
 git clone https://github.com/NicholasMTElliott/codex-image-gen.git
 cd codex-image-gen
-node install.mjs           # install
-node install.mjs --uninstall  # remove
+node install.mjs                                          # install (auto-detect targets)
+node install.mjs --target=claude,opencode,cline,cursor    # explicit targets
+node install.mjs --all                                    # install to every known target (incl. agents)
+node install.mjs --no-opencode                            # exclude target from default set
+node install.mjs --target=agents                          # only the cross-harness agents target
+node install.mjs --list-targets                           # show targets + detection state
+node install.mjs --uninstall                              # remove tool + every target's skill dir
 ```
-Installer paths:
-- Tool: `~/.codex-image-gen/codex-image-gen.mjs`
-- Skill: `~/.claude/skills/codex-image-gen/SKILL.md`
-- Settings patch: `~/.claude/settings.json` → `permissions.allow` += `Bash(node <SCRIPT_PATH> *)`
+Installer paths (per-target; the binary is shared):
+- Tool (shared): `~/.codex-image-gen/codex-image-gen.mjs`
+- Claude Code: skill at `~/.claude/skills/codex-image-gen/SKILL.md`; settings patch in `~/.claude/settings.json` → `permissions.allow` += `Bash(node <SCRIPT_PATH> *)`.
+- opencode: skill at `~/.config/opencode/skills/codex-image-gen/SKILL.md`. No settings patch — opencode is permissive by default.
+- Cline: skill at `~/.cline/skills/codex-image-gen/SKILL.md` (Cline's user-global Skills system per https://docs.cline.bot/customization/skills). No settings patch — Cline does not gate skill-invoked commands behind an allowlist.
+- Cursor: skill at `~/.cursor/skills/codex-image-gen/SKILL.md` (per https://cursor.com/docs/skills). No settings patch. Cursor also reads compatibility paths `~/.claude/skills/` and `~/.codex/skills/`, so the Claude install is independently picked up.
+- Agents (`explicitOnly`, never auto-installed): skill at `~/.agents/skills/codex-image-gen/SKILL.md`. Cross-harness shared dir read by Cursor + opencode. Auto-installing would duplicate entries in harnesses that read both their per-harness path and `~/.agents/skills/`; user must opt in via `--target=agents` or `--all`.
 
 ## Dependencies (tree)
 - Required at runtime: `node` ≥ 18, `codex` CLI on PATH, ChatGPT auth (`codex login`).
-- Optional: Claude Code (only needed for the auto-invoked skill).
+- Optional (any one suffices for auto-invocation): a coding-agent harness that reads SKILL.md — Claude Code, opencode, Cline, Cursor, or any other target the installer registers with.
 
 ## Tooling patterns
 - **CLI shape:** subcommand dispatch — first positional arg picks `generate` or `edit` (default `generate` if absent or flag-first, for backward compat with 0.2.x callers).
@@ -55,7 +63,8 @@ Installer paths:
 - **Session dir naming:** `<timestamp>-<pid>` under `<cwd>/.codex-image-gen-tmp/` (interim). Copied finals go to `resolve(cwd, --out || 'codex-image-gen-output')` (persistent). Default filename: `<sessionId>-<basename>`. With `--name`: `<slug><ext>` for select=1, `<slug>-<n><ext>` for select>1; collisions (existing file at preferred dest) fall back to `<slug>-<sessionId>[.|-<n>]<ext>` with a warning. Caller adds the persistent dir + `.codex-image-gen-tmp/` to their `.gitignore` (this repo's .gitignore covers the defaults).
 - **Edit-mode reference staging:** `<sessionDir>/output/references/<basename>` — copy each `--reference` into a subdir of the codex `--cd` target. Subdir keeps reference files out of the generated-output scan. Cleaned up with the rest of tmp on success.
 - **Cleanup contract:** on `ok && !--debug`, the session tmp dir is removed via `rmSync(sessionDir, {recursive:true, force:true})`. Failures (`ok===false`) preserve tmp unconditionally for debugging. Cleanup errors emit a warning but do not flip `ok` to false.
-- **Settings patcher (`install.mjs`):** idempotent — re-runs are no-ops; tolerates missing/malformed settings.json by printing the rule instead of crashing.
+- **Settings patcher (`install.mjs`):** idempotent — re-runs are no-ops; tolerates missing/malformed settings.json by printing the rule instead of crashing. Per-target — currently only the Claude target needs it (opencode, Cline, and Cursor are permissive by default).
+- **Multi-target install (`install.mjs`):** owns a `TARGETS` registry (`{id, label, skillDir, settingsPath, detectPath, defaultOn, explicitOnly?}`). Resolution: `--target=<csv>` overrides everything; else `--all` selects every target (including `explicitOnly` ones); else default = every target where `!explicitOnly && (defaultOn || detectPath exists)`; `--no-<id>` removes from the resulting set. `--list-targets` prints state and exits. To add a new harness, append a registry entry plus a test case in `tests/install.test.mjs`. AGENTS.md-only harnesses (Aider, Continue.dev, Windsurf, etc.) are intentionally not auto-registered — their right channel is a project-root file the user shouldn't have auto-modified. The `agents` cross-harness target uses `explicitOnly: true` to avoid duplicate-skill issues with Cursor/opencode, which read both `~/.agents/skills/` and their own per-harness path.
 
 ## Repo files (entry points)
 - `codex-image-gen.mjs` — runtime tool (executable, shebang `node`).
