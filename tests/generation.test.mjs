@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { mktempDir, readFakeCodexMeta, runTool } from './helpers.mjs';
 
@@ -344,4 +344,83 @@ test('36. --style-file / --subject-file: contents land verbatim in the codex pro
   assert.match(meta.prompt, /line two of subject/);
   // Trimmed: no run of blank lines from the trailing newlines we wrote.
   assert.doesNotMatch(meta.prompt, /line two of style\n\n\n/);
+});
+
+test('37. concurrent same-cwd runs produce distinct session and selected paths', async () => {
+  const cwd = mktempDir('cig-concurrent-cwd-');
+  const [r1, r2] = await Promise.all([
+    runTool(
+      ['--style', 's', '--subject', 'alpha'],
+      { cwd, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'alpha' } },
+    ),
+    runTool(
+      ['--style', 's', '--subject', 'beta'],
+      { cwd, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'beta' } },
+    ),
+  ]);
+
+  assert.equal(r1.code, 0);
+  assert.equal(r2.code, 0);
+  assert.equal(r1.json.ok, true);
+  assert.equal(r2.json.ok, true);
+  assert.notEqual(r1.json.workdir, r2.json.workdir);
+  assert.notEqual(r1.json.selected.paths[0], r2.json.selected.paths[0]);
+  assert.equal(r1.json.outputDir, r2.json.outputDir);
+  assert.equal(readdirSync(r1.json.outputDir).length, 2);
+});
+
+test('38. concurrent same-cwd same-name runs use atomic collision fallback', async () => {
+  const cwd = mktempDir('cig-concurrent-name-');
+  const [r1, r2] = await Promise.all([
+    runTool(
+      ['--style', 's', '--subject', 'alpha', '--name', 'logo'],
+      { cwd, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'alpha' } },
+    ),
+    runTool(
+      ['--style', 's', '--subject', 'beta', '--name', 'logo'],
+      { cwd, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'beta' } },
+    ),
+  ]);
+
+  assert.equal(r1.code, 0);
+  assert.equal(r2.code, 0);
+  const names = [r1, r2].map((r) => r.json.selected.paths[0].split(/[\\/]/).pop());
+  assert.ok(names.includes('logo.png'), `expected preferred logo.png in ${names.join(', ')}`);
+  assert.equal(names.filter((n) => /^logo-\d+-\d+\.png$/.test(n)).length, 1);
+  assert.notEqual(r1.json.selected.paths[0], r2.json.selected.paths[0]);
+  assert.ok(
+    [r1, r2].some((r) => r.json.warnings.some((w) => /logo\.png already exists/.test(w))),
+    `expected collision warning, got ${JSON.stringify([r1.json.warnings, r2.json.warnings])}`,
+  );
+});
+
+test('39. fallback generated_images scan ignores stale and other-run images', async () => {
+  const cwd = mktempDir('cig-fallback-cwd-');
+  const home = mktempDir('cig-fallback-home-');
+  const fallbackDir = join(home, '.codex', 'generated_images');
+  mkdirSync(fallbackDir, { recursive: true });
+  const stale = join(fallbackDir, 'stale-1.png');
+  writeFileSync(stale, Buffer.from([0x89, 0x50, 0x4E, 0x47]));
+  utimesSync(stale, new Date(0), new Date(0));
+
+  const env = { HOME: home, USERPROFILE: home };
+  const [r1, r2] = await Promise.all([
+    runTool(
+      ['--style', 's', '--subject', 'alpha'],
+      { cwd, env, fakeEnv: { FAKE_CODEX_GLOBAL_ONLY: '1', FAKE_CODEX_MARKER: 'alpha', FAKE_CODEX_DELAY_MS: '100' } },
+    ),
+    runTool(
+      ['--style', 's', '--subject', 'beta'],
+      { cwd, env, fakeEnv: { FAKE_CODEX_GLOBAL_ONLY: '1', FAKE_CODEX_MARKER: 'beta', FAKE_CODEX_DELAY_MS: '100' } },
+    ),
+  ]);
+
+  assert.equal(r1.code, 0);
+  assert.equal(r2.code, 0);
+  assert.match(r1.json.selected.paths[0], /alpha-1\.png$/);
+  assert.match(r2.json.selected.paths[0], /beta-1\.png$/);
+  assert.ok(r1.json.warnings.some((w) => /generated_images/.test(w)));
+  assert.ok(r2.json.warnings.some((w) => /generated_images/.test(w)));
+  assert.doesNotMatch(r1.json.selected.paths[0], /stale/);
+  assert.doesNotMatch(r2.json.selected.paths[0], /stale/);
 });

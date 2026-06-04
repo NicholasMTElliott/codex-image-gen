@@ -33,14 +33,14 @@
  * — if present, codex silently switches to API token billing. We deliberately
  * do NOT override CODEX_HOME: codex stores its ChatGPT auth there, and
  * overriding it forces a fresh-install state that drops the user's login.
- * (codex#11435 parallel-session corruption is only a problem under concurrent
- * invocations; this tool is serial-by-design.)
+ * Concurrent invocations in the same project are serialized with a project
+ * lock so shared codex state cannot cross-contaminate image results.
  *
  * No npm dependencies. Requires Node 18+ and `codex` CLI on PATH.
  */
 
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, existsSync } from 'node:fs';
+import { closeSync, constants, copyFileSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 
@@ -54,6 +54,8 @@ process.on('warning', (w) => {
 });
 
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
+const LOCK_RETRY_MS = 250;
+const LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 
 // gpt-image-2 only supports these three sizes. Each --aspect value maps 1:1
 // to a (width, height) pair; we paste both the keyword and the pixel pair
@@ -460,14 +462,93 @@ function buildEditPrompt(args, outDir, resolvedInstruction, stagingEntries) {
 
 // ---------- shared runtime ----------
 
-function listImages(dir) {
+function sleep(ms) {
+  return new Promise((resolveP) => setTimeout(resolveP, ms));
+}
+
+async function acquireProjectLock(lockPath, sessionId) {
+  const started = Date.now();
+  while (true) {
+    let fd = null;
+    try {
+      fd = openSync(lockPath, 'wx');
+      writeFileSync(fd, JSON.stringify({
+        pid: process.pid,
+        sessionId,
+        createdAt: new Date().toISOString(),
+      }) + '\n');
+      closeSync(fd);
+      return { path: lockPath };
+    } catch (e) {
+      if (fd !== null) {
+        try { closeSync(fd); } catch { /* best-effort */ }
+      }
+      if (e.code !== 'EEXIST') {
+        throw new Error(`failed to acquire project lock ${lockPath}: ${e.message}`);
+      }
+      if (Date.now() - started >= LOCK_TIMEOUT_MS) {
+        throw new Error(`timed out waiting for project lock ${lockPath} after ${LOCK_TIMEOUT_MS}ms; another codex-image-gen run may be stuck`);
+      }
+      await sleep(LOCK_RETRY_MS);
+    }
+  }
+}
+
+function releaseProjectLock(lock, warnings) {
+  if (!lock) return;
+  try {
+    rmSync(lock.path, { force: true });
+  } catch (e) {
+    warnings.push(`failed to release project lock ${lock.path}: ${e.message}`);
+  }
+}
+
+function listImages(dir, opts = {}) {
+  const minMtimeMs = opts.minMtimeMs ?? null;
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && IMAGE_EXTS.test(e.name))
-    .map((e) => join(dir, e.name))
+    .map((e) => {
+      const p = join(dir, e.name);
+      return { path: p, mtimeMs: statSync(p).mtimeMs };
+    })
+    .filter((e) => minMtimeMs == null || e.mtimeMs >= minMtimeMs)
     // mtime primary; filename tiebreaker so equal-mtime files (FAT32 2s
     // resolution, fast generation in the same ms) sort deterministically.
-    .sort((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs || a.localeCompare(b));
+    .sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path))
+    .map((e) => e.path);
+}
+
+function copyExclusive(src, dest) {
+  copyFileSync(src, dest, constants.COPYFILE_EXCL);
+}
+
+function copySelectedToPersistent({ src, args, sessionId, persistentOutputDir, index, warnings }) {
+  if (!args.name) {
+    const dest = join(persistentOutputDir, `${sessionId}-${basename(src)}`);
+    copyExclusive(src, dest);
+    return dest;
+  }
+
+  const ext = extname(src);
+  const preferred = args.select === 1
+    ? `${args.name}${ext}`
+    : `${args.name}-${index + 1}${ext}`;
+  const preferredPath = join(persistentOutputDir, preferred);
+  try {
+    copyExclusive(src, preferredPath);
+    return preferredPath;
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+  }
+
+  const fallback = args.select === 1
+    ? `${args.name}-${sessionId}${ext}`
+    : `${args.name}-${sessionId}-${index + 1}${ext}`;
+  const fallbackPath = join(persistentOutputDir, fallback);
+  copyExclusive(src, fallbackPath);
+  warnings.push(`destination ${preferred} already exists; wrote ${fallback} instead`);
+  return fallbackPath;
 }
 
 function runCodex(prompt, env, cwd) {
@@ -603,95 +684,100 @@ async function main() {
   const env = { ...process.env };
   delete env.OPENAI_API_KEY;
 
-  let runResult;
+  const lockPath = join(tmpRoot, '.lock');
+  let lock;
   try {
-    runResult = await runCodex(prompt, env, tmpOutputDir);
+    lock = await acquireProjectLock(lockPath, sessionId);
   } catch (e) {
     return emit(buildResult({
       ok: false, args, stagingEntries, instructionResolved,
       generatedPaths: [], persistentSelectedPaths: [],
       persistentOutputDir, sessionDir, warnings, cleanedUp: false,
-      error: `failed to spawn codex: ${e.message}`,
+      error: e.message,
       durationMs: Date.now() - start,
     }), 1);
   }
 
-  if (runResult.code !== 0) {
+  const runStartedAt = Date.now();
+  let runResult;
+  let lockedError = null;
+  let generatedPaths = [];
+  const persistentSelectedPaths = [];
+
+  try {
+    try {
+      runResult = await runCodex(prompt, env, tmpOutputDir);
+    } catch (e) {
+      lockedError = `failed to spawn codex: ${e.message}`;
+    }
+
+    if (!lockedError && runResult.code !== 0) {
+      lockedError = `codex exited with code ${runResult.code}. stderr tail: ${runResult.stderr.slice(-500).trim()}`;
+    }
+
+    if (!lockedError) {
+      generatedPaths = listImages(tmpOutputDir);
+      if (generatedPaths.length === 0) {
+        const fallback = join(homedir(), '.codex', 'generated_images');
+        const fallbackImgs = listImages(fallback, { minMtimeMs: runStartedAt }).slice(-args.generate);
+        if (fallbackImgs.length > 0) {
+          warnings.push(`no images in requested output dir; fell back to ${fallback} using images modified after this run started`);
+          generatedPaths = fallbackImgs;
+        }
+      }
+      if (generatedPaths.length !== args.generate) {
+        warnings.push(`expected ${args.generate} generated image(s), found ${generatedPaths.length}`);
+      }
+
+      let selectedTmpPaths;
+      const needsSelection = args.select < args.generate;
+      if (needsSelection) {
+        const selectedDir = join(tmpOutputDir, 'selected');
+        selectedTmpPaths = listImages(selectedDir);
+        if (selectedTmpPaths.length === 0) {
+          warnings.push(`no "selected/" subfolder produced by codex; falling back to first ${args.select} generated image(s) by mtime`);
+          selectedTmpPaths = generatedPaths.slice(0, args.select);
+        } else if (selectedTmpPaths.length !== args.select) {
+          warnings.push(`expected ${args.select} selected image(s), found ${selectedTmpPaths.length} in selected/`);
+        }
+      } else {
+        selectedTmpPaths = generatedPaths.slice(0, args.select);
+      }
+
+      // Copy selected files to the persistent output dir. Filename strategy:
+      //   - default: sessionId-prefixed (collision-safe across runs).
+      //   - --name <slug>: <slug><ext> when select=1, otherwise <slug>-<n><ext>.
+      //     On collision or a lost race, fall back to a sessionId-
+      //     disambiguated name and warn — caller's previous keepers stay intact.
+      // Best-effort: a copy failure is recorded as a warning and reflected in
+      // `ok` via the count check below.
+      if (selectedTmpPaths.length > 0) {
+        mkdirSync(persistentOutputDir, { recursive: true });
+        for (let i = 0; i < selectedTmpPaths.length; i++) {
+          const src = selectedTmpPaths[i];
+          try {
+            const dest = copySelectedToPersistent({
+              src, args, sessionId, persistentOutputDir, index: i, warnings,
+            });
+            persistentSelectedPaths.push(dest);
+          } catch (e) {
+            warnings.push(`failed to copy ${src} to persistent output: ${e.message}`);
+          }
+        }
+      }
+    }
+  } finally {
+    releaseProjectLock(lock, warnings);
+  }
+
+  if (lockedError) {
     return emit(buildResult({
       ok: false, args, stagingEntries, instructionResolved,
       generatedPaths: [], persistentSelectedPaths: [],
       persistentOutputDir, sessionDir, warnings, cleanedUp: false,
-      error: `codex exited with code ${runResult.code}. stderr tail: ${runResult.stderr.slice(-500).trim()}`,
+      error: lockedError,
       durationMs: Date.now() - start,
     }), 1);
-  }
-
-  let generatedPaths = listImages(tmpOutputDir);
-  if (generatedPaths.length === 0) {
-    const fallback = join(homedir(), '.codex', 'generated_images');
-    const fallbackImgs = listImages(fallback);
-    if (fallbackImgs.length > 0) {
-      warnings.push(`no images in requested output dir; fell back to ${fallback}`);
-      generatedPaths = fallbackImgs;
-    }
-  }
-  if (generatedPaths.length !== args.generate) {
-    warnings.push(`expected ${args.generate} generated image(s), found ${generatedPaths.length}`);
-  }
-
-  let selectedTmpPaths;
-  const needsSelection = args.select < args.generate;
-  if (needsSelection) {
-    const selectedDir = join(tmpOutputDir, 'selected');
-    selectedTmpPaths = listImages(selectedDir);
-    if (selectedTmpPaths.length === 0) {
-      warnings.push(`no "selected/" subfolder produced by codex; falling back to first ${args.select} generated image(s) by mtime`);
-      selectedTmpPaths = generatedPaths.slice(0, args.select);
-    } else if (selectedTmpPaths.length !== args.select) {
-      warnings.push(`expected ${args.select} selected image(s), found ${selectedTmpPaths.length} in selected/`);
-    }
-  } else {
-    selectedTmpPaths = generatedPaths.slice(0, args.select);
-  }
-
-  // Copy selected files to the persistent output dir. Filename strategy:
-  //   - default: sessionId-prefixed (collision-safe across runs).
-  //   - --name <slug>: <slug><ext> when select=1, otherwise <slug>-<n><ext>.
-  //     On collision (re-run with same --name), fall back to a sessionId-
-  //     disambiguated name and warn — caller's previous keepers stay intact.
-  // Best-effort: a copy failure is recorded as a warning and reflected in
-  // `ok` via the count check below.
-  const persistentSelectedPaths = [];
-  if (selectedTmpPaths.length > 0) {
-    mkdirSync(persistentOutputDir, { recursive: true });
-    for (let i = 0; i < selectedTmpPaths.length; i++) {
-      const src = selectedTmpPaths[i];
-      let dest;
-      if (args.name) {
-        const ext = extname(src);
-        const preferred = args.select === 1
-          ? `${args.name}${ext}`
-          : `${args.name}-${i + 1}${ext}`;
-        const preferredPath = join(persistentOutputDir, preferred);
-        if (existsSync(preferredPath)) {
-          const fallback = args.select === 1
-            ? `${args.name}-${sessionId}${ext}`
-            : `${args.name}-${sessionId}-${i + 1}${ext}`;
-          dest = join(persistentOutputDir, fallback);
-          warnings.push(`destination ${preferred} already exists; wrote ${fallback} instead`);
-        } else {
-          dest = preferredPath;
-        }
-      } else {
-        dest = join(persistentOutputDir, `${sessionId}-${basename(src)}`);
-      }
-      try {
-        copyFileSync(src, dest);
-        persistentSelectedPaths.push(dest);
-      } catch (e) {
-        warnings.push(`failed to copy ${src} → ${dest}: ${e.message}`);
-      }
-    }
   }
 
   const ok =

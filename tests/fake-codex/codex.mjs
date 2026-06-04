@@ -17,6 +17,10 @@
  *   FAKE_CODEX_GENERATE      override generate count (default: parse prompt)
  *   FAKE_CODEX_SELECT        override select count (default: parse prompt)
  *   FAKE_CODEX_SKIP_SELECTED skip creating selected/ subfolder even if asked
+ *   FAKE_CODEX_DELAY_MS      wait before writing images (for lock tests)
+ *   FAKE_CODEX_GLOBAL_ONLY   write generated images to ~/.codex/generated_images
+ *                            instead of --cd (for fallback tests)
+ *   FAKE_CODEX_MARKER        filename prefix for generated images
  *
  * Always-on side effect: writes <outdir>/.fake-codex-meta.json containing
  * the captured prompt, argv, and a snapshot of relevant env vars. Tests
@@ -26,6 +30,7 @@
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 // 8-byte PNG magic + minimal IHDR/IDAT/IEND so it'd survive `file --mime-type`.
@@ -79,14 +84,23 @@ const promptSelMatch = prompt.match(/pick the (\d+) strongest/i);
 const generate = intEnv('FAKE_CODEX_GENERATE', promptGenMatch ? parseInt(promptGenMatch[1], 10) : 1);
 const select = intEnv('FAKE_CODEX_SELECT', promptSelMatch ? parseInt(promptSelMatch[1], 10) : generate);
 const wantsSelected = promptSelMatch != null && process.env.FAKE_CODEX_SKIP_SELECTED !== '1';
+const delayMs = intEnv('FAKE_CODEX_DELAY_MS', 0);
+const globalOnly = process.env.FAKE_CODEX_GLOBAL_ONLY === '1';
+const marker = process.env.FAKE_CODEX_MARKER || 'variant';
+
+if (delayMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 // Ensure output dir exists
 mkdirSync(outDir, { recursive: true });
+const imageDir = globalOnly ? join(homedir(), '.codex', 'generated_images') : outDir;
+mkdirSync(imageDir, { recursive: true });
 
 // Write fake variants
 const writtenVariants = [];
 for (let i = 1; i <= generate; i++) {
-  const p = join(outDir, `variant-${i}.png`);
+  const p = join(imageDir, `${marker}-${i}.png`);
   writeFileSync(p, PNG_BYTES);
   writtenVariants.push(p);
 }
@@ -97,7 +111,7 @@ if (wantsSelected) {
   const selDir = join(outDir, 'selected');
   mkdirSync(selDir, { recursive: true });
   for (let i = 1; i <= Math.min(select, generate); i++) {
-    const p = join(selDir, `variant-${i}.png`);
+    const p = join(selDir, `${marker}-${i}.png`);
     writeFileSync(p, PNG_BYTES);
     writtenSelected.push(p);
   }
@@ -109,6 +123,7 @@ const meta = {
   argv,
   cwd: process.cwd(),
   outDir,
+  imageDir,
   generate,
   select,
   wantsSelected,

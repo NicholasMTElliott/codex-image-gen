@@ -140,7 +140,7 @@ node ~/.codex-image-gen/codex-image-gen.mjs edit \
   --instruction "Render the character of @alien.png in the pose of @pose.png. Match @alien.png's style exactly."
 ```
 
-Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide; pass `--out` to redirect into a different directory and/or `--name` to control the filename. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
+Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex-image-gen-output/` with sessionId-prefixed filenames so consecutive runs don't collide; pass `--out` to redirect into a different directory and/or `--name` to control the filename. Concurrent runs in the same cwd are queued with `<cwd>/.codex-image-gen-tmp/.lock` so shared Codex state cannot cross-contaminate results. The interim per-session work dir under `<cwd>/.codex-image-gen-tmp/<sessionId>/` is removed automatically on success — pass `--debug` to keep it, and failures always preserve it for debugging.
 
 ### Parameters
 
@@ -162,7 +162,7 @@ Output is JSON on stdout. By default, selected images are copied to `<cwd>/codex
 - `--generate` (optional, default 1). Number of variants.
 - `--select` (optional, default 1, must be ≤ `--generate`). Number to keep. When less than `--generate`, codex reviews and picks; otherwise no review runs.
 - `--aspect` (optional, default `square`). Output aspect ratio. Maps 1:1 to gpt-image-2's three supported sizes — `square` → 1024×1024, `portrait` → 1024×1536, `landscape` → 1536×1024. The keyword + pixel target are pasted into the codex prompt so the request routes to the correct size; the chosen aspect is surfaced in the JSON output as `aspect: { name, width, height }`.
-- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run that would overwrite, the tool falls back to a sessionId-disambiguated name and emits a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
+- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is `kharr-emblem.png`. With `--select 2+`, the files are `kharr-emblem-1.png`, `kharr-emblem-2.png`, …. On a re-run or concurrent race that would overwrite, the tool uses an atomic copy and falls back to a sessionId-disambiguated name with a warning. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, the default sessionId-prefixed naming is used.
 - `--out` (optional). Persistent output directory (relative to cwd, or absolute). Default `./codex-image-gen-output/`. Combine with `--name` to drop selected images straight into a project's asset folder.
 - `--debug` (optional flag). Keep the per-session tmp work dir after a successful run. Default behavior cleans it up to minimize disk impact. Failed runs always preserve tmp regardless of this flag.
 
@@ -211,7 +211,7 @@ In `edit` mode, the JSON adds two extra fields:
 
 `references[].referenced` is `true` when the staged file appeared as an `@`-token in the instruction. A `false` entry triggers a warning — codex may ignore the reference, so either drop it from the call or `@`-mention it.
 
-Inspect `warnings` for fallbacks (mtime-based discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, basename-collision auto-suffix in `edit` mode, duplicate-reference dedup, copy/cleanup failures).
+Inspect `warnings` for fallbacks (run-start-filtered discovery if codex didn't write to the requested directory, mtime-based selection if codex didn't produce a `selected/` subfolder, basename-collision auto-suffix in `edit` mode, duplicate-reference dedup, copy/cleanup failures).
 
 ## Using it from a coding-agent harness
 
@@ -308,7 +308,7 @@ If a run fails (`ok: false`) the tmp work dir is preserved so you can investigat
 
 - **Why no npm deps**: keeps install trivial. Just `node install.mjs`. No `node_modules`, no version pinning, no transitive supply chain.
 - **Why we delete `OPENAI_API_KEY`**: codex routes to API billing if it sees that variable, silently. We force subscription routing by stripping it from the spawned env.
-- **Why we don't override `CODEX_HOME`**: codex stores its ChatGPT auth there. Override → fresh-install state → no auth → 401. The codex#11435 parallel-session corruption bug (which a per-session `CODEX_HOME` *would* dodge) only matters under concurrent invocation; this tool is serial-by-design.
+- **Why same-project runs are queued**: codex stores auth and session/image state under `CODEX_HOME`, which must remain shared for ChatGPT subscription billing. The wrapper serializes runs per cwd with `.codex-image-gen-tmp/.lock` so two prompts in the same project cannot corrupt shared Codex state or read each other's fallback images.
 - **Why prompt is piped via stdin**: `codex exec` accepts the prompt as a positional arg, but on Windows with `shell:true` (required to spawn `codex.cmd` post-CVE-2024-27980) Node concatenates args without escaping, so a multi-word prompt gets split. Stdin sidesteps the whole issue.
 - **Why `--full-auto`**: skips codex's per-shell-command approval prompts so the workflow is hands-off.
 - **Why `--cd` to the session output dir**: keeps codex's `workspace-write` sandbox confined to that directory. It can read from `~/.codex/` (its own state) but can only write into our session dir.

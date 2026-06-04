@@ -26,7 +26,8 @@ Wrap `codex exec --full-auto` so an agent can request N variants and optionally 
 ### Shared behavior
 - Behavior: spawns codex with a synthesized prompt, waits, scans tmp dir, copies selected files to a persistent output dir, cleans up tmp on success.
 - Selection: when `select < generate`, codex reviews variants and copies chosen ones into `output/selected/`. When `select == generate`, no review step.
-- Persistence: selected files copied to `<persistentOutputDir>/<filename>`. Default dir is `<cwd>/codex-image-gen-output/` (override with `--out`, relative or absolute). Default filename is `<sessionId>-<basename>` (sessionId prefix prevents cross-run collisions). With `--name SLUG`, filename is `<slug>.png` when select=1 or `<slug>-<n>.png` when select>1; on collision with an existing file, falls back to `<slug>-<sessionId>[.|-<n>].png` and warns (preserves prior keepers).
+- Concurrency: same-cwd invocations queue on `<cwd>/.codex-image-gen-tmp/.lock` around `codex exec`, fallback scanning, and persistent copy so shared Codex state cannot leak between prompts.
+- Persistence: selected files copied to `<persistentOutputDir>/<filename>`. Default dir is `<cwd>/codex-image-gen-output/` (override with `--out`, relative or absolute). Default filename is `<sessionId>-<basename>` (sessionId prefix prevents cross-run collisions). With `--name SLUG`, filename is `<slug>.png` when select=1 or `<slug>-<n>.png` when select>1; on existing-file collision or concurrent race, atomic copy falls back to `<slug>-<sessionId>[.|-<n>].png` and warns (preserves prior keepers).
 - Cleanup: tmp session dir (`./.codex-image-gen-tmp/<sessionId>/`) removed on success unless `--debug`. Failures preserve tmp regardless.
 - Output: machine-readable JSON on stdout — `ok`, `mode` (`"generate"` or `"edit"`), `generated.{count,paths}`, `selected.{count,paths,expected}`, `outputDir`, `workdir`, `aspect.{name,width,height}`, `warnings`, `durationMs`. `edit` mode adds `references[]` (each `{source,staged,referenced}`) and `instruction.{raw,resolved}`. After cleanup `generated.paths` is empty (would be stale tmp paths); `selected.paths` always points to the persistent output dir.
 
@@ -34,5 +35,5 @@ Wrap `codex exec --full-auto` so an agent can request N variants and optionally 
 - Two cwd-relative dirs by default: `./.codex-image-gen-tmp/<sessionId>/` (interim, auto-deleted on success) and `./codex-image-gen-output/` (persistent finals, accumulates across runs — override with `--out`). Caller is responsible for moving keepers out (unless `--out` already points at the asset folder) and adding both to `.gitignore`.
 - ~30-60s per variant; ~5-6 min for a 4-generate / 2-select run.
 - Image quota burns 3-5x faster than text turns (5-hour rolling cap + weekly cap). Plus is tight for ~20-image batches; Pro recommended.
-- Warnings (non-empty `warnings` with `ok: true`) signal partial-success fallbacks fired (mtime image discovery, mtime selection, copy/cleanup failures) — worth re-running.
+- Warnings (non-empty `warnings` with `ok: true`) signal partial-success fallbacks fired (run-start-filtered image discovery, mtime selection, copy/cleanup failures) — worth re-running.
 - `ok: false` + no `error` → codex produced fewer images than requested; tmp preserved for inspection; re-run.

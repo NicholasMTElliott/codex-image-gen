@@ -70,7 +70,7 @@ node <<SCRIPT_PATH>> edit \
 - `--generate` (optional, default 1). Number of variants to generate. Each variant burns ChatGPT subscription quota at ~3-5x the rate of a text turn.
 - `--select` (optional, default 1; must be ≤ `--generate`). Number of variants to keep. When `select < generate`, codex reviews the generated variants and picks the strongest. When `select == generate`, the review step is skipped.
 - `--aspect` (optional, default `square`). Output aspect ratio: `square` (1024×1024), `portrait` (1024×1536), `landscape` (1536×1024). These are the only sizes gpt-image-2 supports; pick by composition. The keyword + pixel target are pasted into the prompt and surfaced in the JSON output (`aspect: { name, width, height }`).
-- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run that would overwrite an existing file, the tool falls back to a sessionId-disambiguated name and emits a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.
+- `--name` (optional). Output filename slug. With `--name kharr-emblem` and `--select 1`, the persistent file is named `kharr-emblem.png` (no sessionId prefix to strip). With `--select 2+`, it's `kharr-emblem-1.png`, `kharr-emblem-2.png`, … On a re-run or concurrent race that would overwrite an existing file, the tool uses an atomic copy and falls back to a sessionId-disambiguated name with a warning so prior keepers stay intact. Allowed chars: letters, digits, `.`, `_`, `-`. Without `--name`, files keep the default sessionId prefix and you'll typically rename when moving them. Prefer `--name` when you already know the asset's final name.
 - `--out` (optional). Override the persistent output directory. Default `./codex-image-gen-output/` (relative to caller cwd). Pass an absolute path or a path relative to cwd to drop selected images straight into the project's asset folder, e.g. `--out assets/icons` or `--out /abs/path/to/assets`. The directory is created if missing.
 - `--debug` (optional flag). Keep the per-session tmp work dir on success. Default cleans it up to minimize disk impact. Failures always preserve tmp regardless. Only set this when you intend to inspect interim files.
 
@@ -117,7 +117,7 @@ In `edit` mode the JSON adds two extra fields:
 
 `ok` is true only when `generated.count == --generate` AND `selected.count == --select`. If `ok` is false, inspect `warnings` and `error`.
 
-`selected.paths` is the canonical "use these" list and always points into the persistent output dir (default `<cwd>/codex-image-gen-output/`, or whatever `--out` was set to). By default filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide; pass `--name` to control the filename instead. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
+`selected.paths` is the canonical "use these" list and always points into the persistent output dir (default `<cwd>/codex-image-gen-output/`, or whatever `--out` was set to). By default filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide; pass `--name` to control the filename instead. Same-cwd concurrent runs are queued with `.codex-image-gen-tmp/.lock` so shared Codex image state cannot leak between prompts. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
 
 ## After invoking
 
@@ -152,5 +152,5 @@ The tool copies selected files into the persistent output dir (default `./codex-
 ## Failure modes
 
 - `error: "codex exited with code N"` — usually auth (run `codex login`), out-of-quota (check ChatGPT plan limits), or codex sandbox refusal.
-- `warnings: [...]` non-empty + `ok: true` — partial success. The fallbacks (mtime-based image discovery, mtime-based selection if codex didn't honor the `selected/` subfolder) kicked in. Worth re-running.
+- `warnings: [...]` non-empty + `ok: true` — partial success. The fallbacks (run-start-filtered image discovery if codex didn't honor the output dir, mtime-based selection if codex didn't honor the `selected/` subfolder) kicked in. Worth re-running.
 - `ok: false` with no error — codex generated fewer images than requested. Re-run.
