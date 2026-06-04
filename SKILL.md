@@ -117,7 +117,7 @@ In `edit` mode the JSON adds two extra fields:
 
 `ok` is true only when `generated.count == --generate` AND `selected.count == --select`. If `ok` is false, inspect `warnings` and `error`.
 
-`selected.paths` is the canonical "use these" list and always points into the persistent output dir (default `<cwd>/codex-image-gen-output/`, or whatever `--out` was set to). By default filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide; pass `--name` to control the filename instead. Same-cwd concurrent runs are queued with `.codex-image-gen-tmp/.lock` so shared Codex image state cannot leak between prompts. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
+`selected.paths` is the canonical "use these" list and always points into the persistent output dir (default `<cwd>/codex-image-gen-output/`, or whatever `--out` was set to). By default filenames are sessionId-prefixed (e.g. `1716123456789-12345-variant-2.png`) so multiple runs in the same cwd don't collide; pass `--name` to control the filename instead. Concurrent runs are serialized machine-wide with a global lock (`$CODEX_HOME/.codex-image-gen.lock`) so shared Codex state cannot leak between prompts, even across different projects; a crashed run's lock self-recovers. `generated.paths` is empty after the default cleanup; with `--debug` or on failure it surfaces tmp paths instead.
 
 ## After invoking
 

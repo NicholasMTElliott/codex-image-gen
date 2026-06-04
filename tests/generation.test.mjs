@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { mktempDir, readFakeCodexMeta, runTool } from './helpers.mjs';
+
+const LOCK_FILE = '.codex-image-gen.lock';
 
 test('6. single-image happy path: ok=true, 1 selected, paths absolute and in persistent output dir', async () => {
   const r = await runTool(['--style', 'studio photo', '--subject', 'an apple']);
@@ -423,4 +426,83 @@ test('39. fallback generated_images scan ignores stale and other-run images', as
   assert.ok(r2.json.warnings.some((w) => /generated_images/.test(w)));
   assert.doesNotMatch(r1.json.selected.paths[0], /stale/);
   assert.doesNotMatch(r2.json.selected.paths[0], /stale/);
+});
+
+test('40. a stale lock from a dead same-host pid is reclaimed, not waited on', async () => {
+  const cwd = mktempDir('cig-stale-lock-');
+  const lockDir = mktempDir('cig-stale-lockdir-');
+  // Forge a lock owned by a pid that does not exist on this host. The tool
+  // must detect it as dead and reclaim it immediately rather than block.
+  writeFileSync(join(lockDir, LOCK_FILE), JSON.stringify({
+    pid: 2147483646, // way above any live pid; process.kill(pid, 0) → ESRCH
+    host: hostname(),
+    sessionId: 'ghost',
+    createdAt: new Date().toISOString(),
+  }) + '\n');
+
+  const started = Date.now();
+  const r = await runTool(
+    ['--style', 's', '--subject', 'reclaim'],
+    { cwd, env: { CODEX_IMAGE_GEN_LOCK_DIR: lockDir } },
+  );
+
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+  // Reclaim is immediate; nothing near the 30-min timeout or even the 250ms
+  // poll interval should be needed.
+  assert.ok(Date.now() - started < 10_000, 'stale lock should not be waited on');
+});
+
+test('41. the global lock serializes runs across different cwds', async () => {
+  // Two runs in *different* projects must still not overlap — the corruption
+  // they cause is in shared CODEX_HOME state, not per-cwd. Pinning both to one
+  // lock dir proves the lock scope is global, not tied to cwd.
+  const sharedLockDir = mktempDir('cig-global-lock-');
+  const cwdA = mktempDir('cig-global-a-');
+  const cwdB = mktempDir('cig-global-b-');
+  const [rA, rB] = await Promise.all([
+    runTool(
+      ['--style', 's', '--subject', 'alpha', '--name', 'art'],
+      { cwd: cwdA, env: { CODEX_IMAGE_GEN_LOCK_DIR: sharedLockDir }, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'alpha' } },
+    ),
+    runTool(
+      ['--style', 's', '--subject', 'beta', '--name', 'art'],
+      { cwd: cwdB, env: { CODEX_IMAGE_GEN_LOCK_DIR: sharedLockDir }, fakeEnv: { FAKE_CODEX_DELAY_MS: '100', FAKE_CODEX_MARKER: 'beta' } },
+    ),
+  ]);
+
+  assert.equal(rA.code, 0);
+  assert.equal(rB.code, 0);
+  assert.equal(rA.json.ok, true);
+  assert.equal(rB.json.ok, true);
+  // Distinct projects → distinct output dirs and session dirs; no cross-talk.
+  assert.notEqual(rA.json.outputDir, rB.json.outputDir);
+  assert.notEqual(rA.json.workdir, rB.json.workdir);
+  assert.equal(readdirSync(rA.json.outputDir).length, 1);
+  assert.equal(readdirSync(rB.json.outputDir).length, 1);
+  // The lock is released after both finish.
+  assert.ok(!existsSync(join(sharedLockDir, LOCK_FILE)), 'lock file should be released');
+});
+
+test('42. fallback generated_images honors custom CODEX_HOME', async () => {
+  const cwd = mktempDir('cig-codex-home-cwd-');
+  const home = mktempDir('cig-codex-home-default-');
+  const codexHome = mktempDir('cig-codex-home-custom-');
+  const r = await runTool(
+    ['--style', 's', '--subject', 'custom-home'],
+    {
+      cwd,
+      env: { HOME: home, USERPROFILE: home, CODEX_HOME: codexHome },
+      fakeEnv: { FAKE_CODEX_GLOBAL_ONLY: '1', FAKE_CODEX_MARKER: 'custom-home' },
+    },
+  );
+
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+  assert.match(r.json.selected.paths[0], /custom-home-1\.png$/);
+  assert.ok(
+    r.json.warnings.some((w) => w.includes(join(codexHome, 'generated_images'))),
+    `expected fallback warning to mention custom CODEX_HOME, got ${JSON.stringify(r.json.warnings)}`,
+  );
+  assert.equal(existsSync(join(home, '.codex', 'generated_images', 'custom-home-1.png')), false);
 });

@@ -13,7 +13,7 @@ codex-image-gen.mjs
    │  edit only: planStaging → resolveInstructionTokens (validate @-tokens up-front,
    │             exit 2 on typo) → stageReferences (copyFileSync each ref into
    │             <sessionDir>/output/references/<basename>)
-   │  buildPrompt (mode-specific) → acquire <cwd>/.codex-image-gen-tmp/.lock → spawn:
+   │  buildPrompt (mode-specific) → acquire global $CODEX_HOME/.codex-image-gen.lock → spawn:
    │  spawn('codex', ['exec','--full-auto','--skip-git-repo-check','--cd', tmpOutDir]),
    │     env without OPENAI_API_KEY, prompt via stdin
    ▼
@@ -37,13 +37,13 @@ edit mode adds references[] and instruction.{raw,resolved})
 - **No npm deps.** Trivial install, no node_modules, no supply chain.
 - **Subcommand dispatch with backward-compat default.** First positional arg (no leading `-`) selects mode (`generate` | `edit`). Absent or flag-first → defaults to `generate` so 0.2.x flag-only invocations keep working. Per-mode arg parsers reject the *other* mode's exclusive flags with a "unknown argument X for Y mode" error.
 - **Strip `OPENAI_API_KEY`** from spawned env. If codex sees it, it silently switches to API billing.
-- **Do not override `CODEX_HOME`.** Codex stores ChatGPT auth there; overriding → fresh-install state → 401. Same-cwd runs are serialized with `<cwd>/.codex-image-gen-tmp/.lock` to avoid Codex shared-state corruption while preserving the user's auth.
+- **Do not override `CODEX_HOME`.** Codex stores ChatGPT auth there; overriding → fresh-install state → 401. Instead, a single **global** lock at `$CODEX_HOME/.codex-image-gen.lock` (default `~/.codex/`, relocatable via `CODEX_IMAGE_GEN_LOCK_DIR`) serializes every run on the machine — the corrupted state (codex#11435 session state + `$CODEX_HOME/generated_images`) is global, so a per-cwd lock would leave cross-project concurrency unsafe. Auth stays intact because the lock is a sibling file, not a `CODEX_HOME` override. Stale locks self-recover: on contention the holder's pid is liveness-probed (`process.kill(pid,0)`, same-host only) and reclaimed if dead, with an age-based backstop for cross-host/corrupt locks; a `SIGINT`/`SIGTERM`/`SIGHUP` handler removes the held lock before exit (the `finally` release doesn't run on signals).
 - **Prompt via stdin, not argv.** On Windows `shell:true` is required to spawn `codex.cmd` (post-CVE-2024-27980), but Node concatenates args without escaping under `shell:true`, so multi-word prompts split. Stdin sidesteps this.
 - **`--cd` to session output dir.** Confines codex's `workspace-write` sandbox to that directory.
 - **`--full-auto`.** Skips per-shell-command approval prompts so the workflow is hands-off.
 - **`--skip-git-repo-check`.** The `--cd` target is always a fresh per-session tmp dir, never a git repo, so codex's trusted-dir guard would refuse every run otherwise. Safe because the prompt only asks codex to generate images and copy them inside that same dir — no destructive operations elsewhere.
 - **Posix-style path inside the prompt** (`replace(/\\/g, '/')`) — codex normalizes both, but forward slashes avoid backslash-escape ambiguity in tool-call parsing.
-- **mtime-sorted image listing** with fallbacks for both image-discovery and selection: if codex didn't write to the requested dir, look in `~/.codex/generated_images/` but only at files modified after this run's locked Codex invocation started, then take the newest requested count; if codex didn't produce a `selected/` subfolder, take first M generated images by mtime. Each fallback emits a warning.
+- **mtime-sorted image listing** with fallbacks for both image-discovery and selection: if codex didn't write to the requested dir, look in `$CODEX_HOME/generated_images` (default `~/.codex/generated_images`) but only at files modified after this run's locked Codex invocation started, then take the newest requested count; if codex didn't produce a `selected/` subfolder, take first M generated images by mtime. Each fallback emits a warning.
 - **Two-dir output layout.** Codex writes into `<cwd>/.codex-image-gen-tmp/<sessionId>/output/` (interim sandbox); selected files are then copied into the persistent output dir (default `<cwd>/codex-image-gen-output/`, override via `--out`). This separates short-lived work from artifacts the caller actually wants, lets us reclaim tmp disk on success, and (with the default sessionId-prefixed filenames) namespaces filenames so consecutive runs don't clobber each other. Default persistent dir name is tool-namespaced (`codex-image-gen-output`, not `output`) to avoid collision with build-tool conventions in the caller's repo.
 - **Filename strategy.** Default: `<sessionId>-<basename>` — collision-safe across runs but requires renaming when moving to a final asset path. With `--name <slug>`: `<slug><ext>` when `select=1`, `<slug>-<n><ext>` when `select>1` — no rename needed. Copies use `COPYFILE_EXCL`; on existing-file collision or lost race, falls back to a sessionId-disambiguated form (`<slug>-<sessionId>[.|-<n>]<ext>`) and emits a warning so prior keepers stay intact. Slug is restricted to `[A-Za-z0-9._-]+` to block path traversal and shell metachars at the boundary; users wanting arbitrary destinations should use `--out` for the dir part instead.
 - **Cleanup-on-success default.** On `ok && !--debug`, `rmSync(sessionDir, {recursive:true, force:true})` runs before emit. Failed runs (`ok===false`) preserve tmp unconditionally so the user can investigate. Cleanup failures are non-fatal — recorded as a warning, the run still reports `ok:true`.
@@ -97,9 +97,9 @@ Steps:
 1. Parse args; resolve `--style-file`/`--subject-file` (mutually exclusive with their inline counterparts; UTF-8 read, `.trim()` to strip trailing newline, empty-after-trim is rejected); validate `select ≤ generate`, both positive integers; `--name` slug (if present) matches `[A-Za-z0-9._-]+`. `--debug` parsed as flag.
 2. Make `<cwd>/.codex-image-gen-tmp/<timestamp>-<pid>/output/` (the per-session tmp work dir).
 3. Build prompt: instructs codex to write exactly N PNGs into that absolute dir, and (if `select<generate`) copy M chosen files into `selected/`. Uses posix-slash absolute paths.
-4. Acquire `<cwd>/.codex-image-gen-tmp/.lock`, then spawn `codex exec --full-auto --skip-git-repo-check --cd <tmpOutputDir>` with `OPENAI_API_KEY` deleted from env. Pipe prompt via stdin.
+4. Acquire the global `$CODEX_HOME/.codex-image-gen.lock` (reclaiming a stale lock if the prior holder is dead), then spawn `codex exec --full-auto --skip-git-repo-check --cd <tmpOutputDir>` with `OPENAI_API_KEY` deleted from env. Pipe prompt via stdin.
 5. On spawn failure or non-zero exit → emit `ok:false` JSON with stderr tail. Tmp preserved.
-6. On zero exit: scan tmp output dir for images; if empty, fall back to run-start-filtered `~/.codex/generated_images/` (warn).
+6. On zero exit: scan tmp output dir for images; if empty, fall back to run-start-filtered `$CODEX_HOME/generated_images` (warn).
 7. If `select<generate`: scan `<tmp>/output/selected/`; if empty, take first M of generated by mtime (warn). Else: selected = first M of generated.
 8. Resolve `persistentOutputDir = resolve(cwd, --out || 'codex-image-gen-output')`. Copy each selected file there using the exclusive-copy filename strategy above (default `<sessionId>-<basename>`; with `--name`, slug-based with collision fallback). Copy failures are recorded as warnings.
 9. `ok = (generated.length == --generate) && (persistentSelected.length == --select)`.
@@ -116,6 +116,6 @@ Steps:
 7. Steps 4–11 from generate mode flow above (spawn → scan → select → copy → cleanup → emit). Result JSON additionally has `mode:"edit"`, `references[]`, `instruction.{raw,resolved}`.
 
 ## Invariants
-- Same-cwd runs are serialized by `.codex-image-gen-tmp/.lock`; unrelated cwd runs can proceed independently.
+- All runs on the machine are serialized by the global `$CODEX_HOME/.codex-image-gen.lock`; runs in unrelated cwds queue rather than overlap (the shared state they would corrupt is global).
 - Session dirs are unique per invocation: `<timestamp>-<pid>`.
 - Output JSON is always valid — even on failure paths, `emit()` writes the same shape.

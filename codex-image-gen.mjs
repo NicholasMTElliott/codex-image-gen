@@ -41,7 +41,7 @@
 
 import { spawn } from 'node:child_process';
 import { closeSync, constants, copyFileSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 
 // Silence DEP0190 (spawn shell:true with args). shell:true is required on
@@ -56,6 +56,10 @@ process.on('warning', (w) => {
 const IMAGE_EXTS = /\.(png|jpe?g|webp)$/i;
 const LOCK_RETRY_MS = 250;
 const LOCK_TIMEOUT_MS = 30 * 60 * 1000;
+// A lock whose owning process is gone but which we can't prove dead (different
+// host, or unparseable contents) is reclaimed once it is older than this — a
+// backstop so a hard-killed run never poisons the lock for the full timeout.
+const LOCK_STALE_MS = 60 * 60 * 1000;
 
 // gpt-image-2 only supports these three sizes. Each --aspect value maps 1:1
 // to a (width, height) pair; we paste both the keyword and the pixel pair
@@ -466,31 +470,109 @@ function sleep(ms) {
   return new Promise((resolveP) => setTimeout(resolveP, ms));
 }
 
+// Lock paths we currently hold, so an interrupting signal can clean them up
+// before the process dies (finally{} doesn't run on SIGINT/SIGTERM).
+const heldLocks = new Set();
+let signalHandlersInstalled = false;
+
+function installLockSignalCleanup() {
+  if (signalHandlersInstalled) return;
+  signalHandlersInstalled = true;
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => {
+      for (const p of heldLocks) {
+        try { rmSync(p, { force: true }); } catch { /* best-effort */ }
+      }
+      heldLocks.clear();
+      // Re-raise with default disposition so the exit code reflects the signal.
+      process.removeAllListeners(sig);
+      process.kill(process.pid, sig);
+    });
+  }
+}
+
+// Decide whether an existing lock file is stale (its owner is gone) and may be
+// reclaimed. Conservative: only declares a same-host lock dead when the OS
+// confirms the pid no longer exists; otherwise it falls back to an age cutoff
+// so a crash on another host (or a corrupt/half-written file) can't poison the
+// lock forever. Returns true only when we are confident the holder is gone.
+function isLockStale(lockPath) {
+  let raw;
+  try {
+    raw = readFileSync(lockPath, 'utf8');
+  } catch (e) {
+    // ENOENT: the holder released it between our open attempt and this read —
+    // treat as free so the caller retries immediately. Other errors: leave it.
+    return e.code === 'ENOENT';
+  }
+  let info = null;
+  try { info = JSON.parse(raw); } catch { /* unparseable — handled below */ }
+
+  if (info && Number.isInteger(info.pid) && info.host === hostname()) {
+    try {
+      process.kill(info.pid, 0); // signal 0 = liveness probe, kills nothing
+      return false;              // owner still alive
+    } catch (e) {
+      if (e.code === 'ESRCH') return true;  // no such process → stale
+      if (e.code === 'EPERM') return false; // alive but owned by another user
+    }
+  }
+
+  // Different host or unparseable contents: we can't probe the pid. Fall back
+  // to an age cutoff so a dead lock still eventually clears.
+  try {
+    return Date.now() - statSync(lockPath).mtimeMs >= LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
 async function acquireProjectLock(lockPath, sessionId) {
+  installLockSignalCleanup();
   const started = Date.now();
+  let reclaimed = false;
   while (true) {
     let fd = null;
     try {
       fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, JSON.stringify({
-        pid: process.pid,
-        sessionId,
-        createdAt: new Date().toISOString(),
-      }) + '\n');
-      closeSync(fd);
-      return { path: lockPath };
     } catch (e) {
-      if (fd !== null) {
-        try { closeSync(fd); } catch { /* best-effort */ }
-      }
       if (e.code !== 'EEXIST') {
         throw new Error(`failed to acquire project lock ${lockPath}: ${e.message}`);
       }
+      // Lock is held. Reclaim it once if the owner is provably gone; otherwise
+      // wait. Only reclaim a single time per acquire so two racing waiters
+      // can't ping-pong deleting each other's freshly-taken lock.
+      if (!reclaimed && isLockStale(lockPath)) {
+        reclaimed = true;
+        try { rmSync(lockPath, { force: true }); } catch { /* best-effort, retry */ }
+        continue; // retry immediately without counting against the timeout wait
+      }
       if (Date.now() - started >= LOCK_TIMEOUT_MS) {
-        throw new Error(`timed out waiting for project lock ${lockPath} after ${LOCK_TIMEOUT_MS}ms; another codex-image-gen run may be stuck`);
+        throw new Error(`timed out waiting for project lock ${lockPath} after ${LOCK_TIMEOUT_MS}ms; another codex-image-gen run may be stuck (delete the file if not)`);
       }
       await sleep(LOCK_RETRY_MS);
+      continue;
     }
+    // We created the lock. Record it for signal cleanup BEFORE writing, so an
+    // interrupt mid-write still removes it.
+    heldLocks.add(lockPath);
+    try {
+      writeFileSync(fd, JSON.stringify({
+        pid: process.pid,
+        host: hostname(),
+        sessionId,
+        createdAt: new Date().toISOString(),
+      }) + '\n');
+    } catch (e) {
+      // Created but couldn't stamp it — remove it rather than leave a poison
+      // lock with no owner info.
+      try { closeSync(fd); } catch { /* best-effort */ }
+      try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }
+      heldLocks.delete(lockPath);
+      throw new Error(`failed to write project lock ${lockPath}: ${e.message}`);
+    }
+    closeSync(fd);
+    return { path: lockPath };
   }
 }
 
@@ -500,6 +582,8 @@ function releaseProjectLock(lock, warnings) {
     rmSync(lock.path, { force: true });
   } catch (e) {
     warnings.push(`failed to release project lock ${lock.path}: ${e.message}`);
+  } finally {
+    heldLocks.delete(lock.path);
   }
 }
 
@@ -684,8 +768,24 @@ async function main() {
   const env = { ...process.env };
   delete env.OPENAI_API_KEY;
 
-  const lockPath = join(tmpRoot, '.lock');
+  const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+
+  // The state that concurrent runs corrupt — codex session state and the
+  // generated_images fallback dir — is global (keyed to CODEX_HOME),
+  // not per-cwd. So the lock is global too: it serializes every codex-image-gen
+  // run on this machine, including ones in unrelated projects, which is the
+  // only scope that actually prevents codex#11435 corruption + fallback
+  // cross-contamination. Runs in different cwds still get distinct session
+  // dirs and outputs; they just don't overlap in time.
+  // CODEX_IMAGE_GEN_LOCK_DIR overrides the lock location — an escape hatch when
+  // CODEX_HOME is read-only, and the seam the test suite uses to isolate runs.
+  const lockRoot = process.env.CODEX_IMAGE_GEN_LOCK_DIR
+    || codexHome;
   let lock;
+  try {
+    mkdirSync(lockRoot, { recursive: true });
+  } catch { /* fall through; acquire will surface a clearer error if it can't open */ }
+  const lockPath = join(lockRoot, '.codex-image-gen.lock');
   try {
     lock = await acquireProjectLock(lockPath, sessionId);
   } catch (e) {
@@ -718,7 +818,7 @@ async function main() {
     if (!lockedError) {
       generatedPaths = listImages(tmpOutputDir);
       if (generatedPaths.length === 0) {
-        const fallback = join(homedir(), '.codex', 'generated_images');
+        const fallback = join(codexHome, 'generated_images');
         const fallbackImgs = listImages(fallback, { minMtimeMs: runStartedAt }).slice(-args.generate);
         if (fallbackImgs.length > 0) {
           warnings.push(`no images in requested output dir; fell back to ${fallback} using images modified after this run started`);

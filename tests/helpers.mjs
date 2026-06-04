@@ -97,6 +97,14 @@ function prependShim(env) {
 export function runTool(args, opts = {}) {
   const cwd = opts.cwd ?? mktempDir('cig-cwd-');
   const baseEnv = { ...process.env, ...(opts.env ?? {}), ...(opts.fakeEnv ?? {}) };
+  // The tool's concurrency lock is machine-global (keyed to CODEX_HOME by
+  // default). Pin it under the run's cwd so tests never touch the real
+  // ~/.codex and unrelated tests don't serialize on a shared lock — while two
+  // runs that share a cwd (the concurrency tests) still contend on one lock.
+  // Tests that exercise lock placement directly can override via opts.env.
+  if (!(opts.env && 'CODEX_IMAGE_GEN_LOCK_DIR' in opts.env)) {
+    baseEnv.CODEX_IMAGE_GEN_LOCK_DIR = join(cwd, '.cig-lock');
+  }
   if (!opts.useRealCodex) prependShim(baseEnv);
   return spawnAndCapture(process.execPath, [TOOL_PATH, ...args], { cwd, env: baseEnv })
     .then((r) => ({ ...r, cwd }));

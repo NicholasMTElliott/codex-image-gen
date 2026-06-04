@@ -18,8 +18,8 @@
  *   FAKE_CODEX_SELECT        override select count (default: parse prompt)
  *   FAKE_CODEX_SKIP_SELECTED skip creating selected/ subfolder even if asked
  *   FAKE_CODEX_DELAY_MS      wait before writing images (for lock tests)
- *   FAKE_CODEX_GLOBAL_ONLY   write generated images to ~/.codex/generated_images
- *                            instead of --cd (for fallback tests)
+ *   FAKE_CODEX_GLOBAL_ONLY   write generated images to $CODEX_HOME/generated_images
+ *                            (default ~/.codex/generated_images) instead of --cd
  *   FAKE_CODEX_MARKER        filename prefix for generated images
  *
  * Always-on side effect: writes <outdir>/.fake-codex-meta.json containing
@@ -94,7 +94,8 @@ if (delayMs > 0) {
 
 // Ensure output dir exists
 mkdirSync(outDir, { recursive: true });
-const imageDir = globalOnly ? join(homedir(), '.codex', 'generated_images') : outDir;
+const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+const imageDir = globalOnly ? join(codexHome, 'generated_images') : outDir;
 mkdirSync(imageDir, { recursive: true });
 
 // Write fake variants
