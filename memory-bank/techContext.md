@@ -18,7 +18,8 @@
   - `codex` installs as `codex.cmd` via npm. Spawning `.cmd` post-CVE-2024-27980 requires `shell:true` (else EINVAL).
   - `shell:true` triggers DEP0190 — suppressed via `process.removeAllListeners('warning')` and a filtered handler. Args are static + a path with no shell metachars, so this is safe here.
   - Under `shell:true`, Node concatenates argv without escaping → multi-word prompts split. Mitigated by piping the prompt via stdin instead of passing it as an argv positional.
-- **Output sandbox.** `codex exec --cd <outputDir>` confines codex's `workspace-write` permission to that dir.
+- **Output sandbox.** `codex exec --sandbox workspace-write --cd <outputDir>` confines codex's write permission to that dir.
+- **Codex flag contract.** Only pass flags listed in `codex exec --help` (verified: codex-cli 0.156.1). `tests/fake-codex/exec-flags.mjs` is the fake's allowlist, copied from that help text; the fake exits 2 on anything else. `tests/codex-flags.test.mjs` checks emitted flags and the allowlist against a real `codex` when one is on PATH (skips otherwise; CI has none). On a codex upgrade: re-copy the allowlist, bump its version.
 
 ## Codex behaviors (empirical)
 - **Image generation.** Codex's built-in `image_gen` tool produces PNGs into the working directory it was `--cd`'d to. We tell it explicit filenames (`variant-1.png`, …) and a target subfolder for selection (`selected/`).

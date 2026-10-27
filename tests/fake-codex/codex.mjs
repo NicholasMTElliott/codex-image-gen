@@ -6,10 +6,13 @@
  * Behavior:
  *   - `codex --version`: prints a fake version, exits 0. Used by install.mjs's
  *     prereq check.
- *   - `codex exec --full-auto --cd <outdir>`: reads the prompt from stdin,
- *     parses it for the requested generate / select counts, drops fake PNG
- *     files into <outdir>, optionally creates <outdir>/selected/ with a
- *     subset, then exits.
+ *   - `codex exec <flags> --cd <outdir>`: rejects (exit 2) any flag the real
+ *     `codex exec --help` doesn't list — see ./exec-flags.mjs for the
+ *     allowlist and the codex version it came from. Otherwise reads the
+ *     prompt from stdin, parses it for the requested generate / select
+ *     counts, drops fake PNG files into <outdir>, optionally creates
+ *     <outdir>/selected/ with a subset, then exits.
+ *   - Any other subcommand: rejected with exit 2.
  *
  * Test-control env vars (read at runtime — set by tests):
  *   FAKE_CODEX_EXIT          override exit code (default: 0)
@@ -32,6 +35,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { validateExecArgs } from './exec-flags.mjs';
 
 // 8-byte PNG magic + minimal IHDR/IDAT/IEND so it'd survive `file --mime-type`.
 // We only need the magic header for the live-smoke validator; tests against the
@@ -51,9 +55,21 @@ const PNG_BYTES = Buffer.from([
 const argv = process.argv.slice(2);
 
 // --version: stub for install.mjs prereq check.
-if (argv[0] === '--version' || argv.includes('--version')) {
+if (argv[0] === '--version' || argv[0] === '-V') {
   process.stdout.write('fake-codex 0.0.0\n');
   process.exit(0);
+}
+
+// Strict argument parsing, like the real CLI: unknown flags fail fast with
+// exit 2 before any prompt is read or file written.
+if (argv[0] !== 'exec') {
+  process.stderr.write(`fake-codex: unsupported invocation: ${JSON.stringify(argv)}\n`);
+  process.exit(2);
+}
+const argError = validateExecArgs(argv.slice(1));
+if (argError) {
+  process.stderr.write(`${argError}\n\nUsage: codex exec [OPTIONS] [PROMPT]\n`);
+  process.exit(2);
 }
 
 // Find --cd <outdir>

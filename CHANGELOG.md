@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+### Fixed
+- Works with current codex CLI again. The tool passed `--full-auto` to
+  `codex exec`; codex removed that flag (around 0.147–0.152) and now exits 2
+  on it before generating anything, so every run failed. The tool now passes
+  `--sandbox workspace-write`, which keeps codex's writes confined to the
+  per-session `--cd` directory. Verified against codex CLI 0.156.1.
+- Concurrent runs no longer contaminate each other. Every run on the machine
+  now queues on one global lock (`$CODEX_HOME/.codex-image-gen.lock`,
+  relocatable via `CODEX_IMAGE_GEN_LOCK_DIR`) held around the codex call, the
+  image scan and the final copy. Locks left by crashed runs are reclaimed.
+- The `generated_images` fallback honors a custom `CODEX_HOME` and only picks
+  up images written after the run started. Final copies never overwrite an
+  existing file; a collision falls back to the sessionId-suffixed name.
+
+### Changed
+- Test harness: the fake codex now rejects any flag that the real
+  `codex exec --help` (0.156.1) doesn't list, so a removed upstream flag fails
+  CI instead of passing silently. The allowlist lives in
+  `tests/fake-codex/exec-flags.mjs`.
+- New `tests/codex-flags.test.mjs`: when a real `codex` is on PATH, checks
+  that every flag the tool emits is in `codex exec --help` and that the real
+  parser accepts the exact argv (no quota used). Skips when codex isn't
+  installed.
+
 ## [0.4.0] - 2026-05-05
 
 ### Added
@@ -166,6 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.claude/settings.json` `permissions.allow`.
 - Zero npm dependencies; Node 18+.
 
+[0.5.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.4.0...release/v0.5.0
 [0.4.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.3.0...release/v0.4.0
 [0.3.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.2.0...release/v0.3.0
 [0.2.0]: https://github.com/NicholasMTElliott/codex-image-gen/compare/release/v0.1.1...release/v0.2.0
