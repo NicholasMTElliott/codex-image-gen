@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Requires Node 22+ (`engines` was `>=18`). Node 18 and 20 are end-of-life.
+- CI tests Node 22, 24 and 26 on Ubuntu, macOS and Windows (was 18/20/22),
+  uses `actions/checkout@v7` and `actions/setup-node@v7`, and cancels a pull
+  request's superseded runs.
+- The installer now refuses to install when the Node running it, or the
+  `node` on `PATH`, is older than 22, instead of only checking that `node`
+  exists.
+- The release workflow tests once (Ubuntu, Node 22) before publishing; the
+  full matrix already ran on master.
+
 ## [0.5.0] - 2026-10-27
 
 ### Fixed

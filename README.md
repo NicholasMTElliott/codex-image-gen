@@ -23,7 +23,7 @@ For `edit` mode specifically: codex's `image_gen` tool can read existing PNGs th
 
 ## Prerequisites
 
-1. **Node 18+** on `PATH`.
+1. **Node 22+** on `PATH`.
 2. **`codex` CLI** on `PATH`, authed against a ChatGPT plan.
    - Install: see https://github.com/openai/codex for the current canonical install command on your platform.
    - Auth: `codex login` (uses ChatGPT account; opens a browser for OAuth).
@@ -319,9 +319,9 @@ If a run fails (`ok: false`) the tmp work dir is preserved so you can investigat
 
 ## Compatibility notes
 
-- Live-tested on Windows 11 + codex CLI 0.164.0 against a ChatGPT subscription. The `codex exec` flags are checked against codex CLI 0.164.0: the test suite's fake codex rejects any flag that version's `codex exec --help` doesn't list, and `tests/codex-flags.test.mjs` checks the emitted flags against the real CLI whenever one is on PATH. POSIX (macOS, Linux) is exercised by CI (Ubuntu + macOS, Node 18/20/22) via the fake-codex test harness, but the live billing path on POSIX is unverified — please open an issue if you hit anything platform-specific against a real ChatGPT subscription.
+- Live-tested on Windows 11 + codex CLI 0.164.0 against a ChatGPT subscription. The `codex exec` flags are checked against codex CLI 0.164.0: the test suite's fake codex rejects any flag that version's `codex exec --help` doesn't list, and `tests/codex-flags.test.mjs` checks the emitted flags against the real CLI whenever one is on PATH. CI runs the fake-codex test harness on Ubuntu, macOS and Windows (Node 22/24/26), but the live billing path on POSIX is unverified — please open an issue if you hit anything platform-specific against a real ChatGPT subscription.
 - `shell: true` is enabled on Windows only (required to spawn the `codex.cmd` shim post-CVE-2024-27980); on POSIX the script uses `shell: false` since `codex` resolves to a real binary.
-- Requires Node 18+ for nullish coalescing (`??`) and `process.removeAllListeners`.
+- Requires Node 22+. Node 18 and 20 are end-of-life and no longer tested.
 
 ## License
 

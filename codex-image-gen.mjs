@@ -36,7 +36,7 @@
  * Concurrent invocations in the same project are serialized with a project
  * lock so shared codex state cannot cross-contaminate image results.
  *
- * No npm dependencies. Requires Node 18+ and `codex` CLI on PATH.
+ * No npm dependencies. Requires Node 22+ and `codex` CLI on PATH.
  */
 
 import { spawn } from 'node:child_process';

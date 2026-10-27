@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [master]
 
+# One run per PR (or per ref for pushes). A new push to a PR cancels that PR's
+# in-flight run; pushes to master always run to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
@@ -14,10 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [18, 20, 22]
+        node: [22, 24, 26]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       # No npm install — the project has zero runtime or test-time deps.

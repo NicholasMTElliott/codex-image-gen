@@ -48,7 +48,7 @@
  *               skill entries. Use --target=agents to install.
  *
  * Prereqs (verified during install):
- *   - Node 18+ on PATH
+ *   - Node 22+ on PATH
  *   - codex CLI on PATH (run `codex login` separately if not yet authed)
  */
 
@@ -147,6 +147,14 @@ function warn(msg) {
  * Used to both check presence and surface the resolved version in the install
  * log so support requests can include it without further prompting.
  */
+const MIN_NODE_MAJOR = 22;
+
+/** Major version from `v22.1.0` / `22.1.0`; null if unparseable. */
+function nodeMajor(version) {
+  const m = /^v?(\d+)\./.exec(String(version ?? '').trim());
+  return m ? Number(m[1]) : null;
+}
+
 function getVersion(cmd) {
   try {
     return execSync(`${cmd} --version`, { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
@@ -272,10 +280,23 @@ function install(parsed) {
 
   // ---- Phase 1: pre-flight checks (no filesystem mutations) ----
   log('[1/4] Pre-flight checks');
+  // Two Node checks: the one running this installer, and the one on PATH
+  // (the installed skill runs `node <script>`, which resolves via PATH).
+  if (nodeMajor(process.versions.node) < MIN_NODE_MAJOR) {
+    err(`this installer is running on Node ${process.versions.node}; codex-image-gen needs Node ${MIN_NODE_MAJOR}+.`);
+    warn(`  Install Node ${MIN_NODE_MAJOR}+ from https://nodejs.org and re-run.`);
+    process.exit(1);
+  }
   const nodeVer = getVersion('node');
   if (!nodeVer) {
     err('node not found on PATH.');
-    warn('  Install Node 18+ from https://nodejs.org and re-run.');
+    warn(`  Install Node ${MIN_NODE_MAJOR}+ from https://nodejs.org and re-run.`);
+    process.exit(1);
+  }
+  const pathMajor = nodeMajor(nodeVer);
+  if (pathMajor === null || pathMajor < MIN_NODE_MAJOR) {
+    err(`node on PATH is ${nodeVer}; codex-image-gen needs Node ${MIN_NODE_MAJOR}+.`);
+    warn(`  Install Node ${MIN_NODE_MAJOR}+ from https://nodejs.org (or switch versions) and re-run.`);
     process.exit(1);
   }
   log(`  [ok] node ${nodeVer}`);
