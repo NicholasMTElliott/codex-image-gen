@@ -4,7 +4,7 @@
 Claude Code cannot generate raster images natively. Calling OpenAI image APIs directly burns API tokens. Many users have a ChatGPT Plus/Pro subscription whose image quota would otherwise go unused.
 
 ## Solution
-Wrap `codex exec --full-auto` so an agent can request N variants and optionally have codex review and pick the best M. Billing flows through the ChatGPT subscription as long as `OPENAI_API_KEY` is unset in the spawned env.
+Wrap `codex exec --sandbox workspace-write` so an agent can request N variants and optionally have codex review and pick the best M. Billing flows through the ChatGPT subscription as long as `OPENAI_API_KEY` is unset in the spawned env.
 
 ## Functional intent
 

@@ -274,18 +274,20 @@ If a manual run fails or the skill isn't being invoked, work down this list:
    ```
    If this fails, the problem is upstream of Claude Code (auth, quota, codex install).
 
-2. **Auth failure** (401 / "Missing bearer or basic authentication") — your codex ChatGPT session expired. Run `codex login` again.
+2. **`error: unexpected argument '--full-auto' found`** — you have a release older than 0.5.0 and a codex CLI that no longer accepts `--full-auto`. Update codex-image-gen.
 
-3. **Quota exhausted** — codex returns a quota error. Wait for the 5-hour rolling window to reset, or upgrade your ChatGPT plan.
+3. **Auth failure** (401 / "Missing bearer or basic authentication") — your codex ChatGPT session expired. Run `codex login` again.
 
-4. **Skill not auto-invoked from your agent** — verify install state. First, run `node install.mjs --list-targets` to see which harnesses the installer recognizes and whether each is detected on this machine. Then for each harness:
+4. **Quota exhausted** — codex returns a quota error. Wait for the 5-hour rolling window to reset, or upgrade your ChatGPT plan.
+
+5. **Skill not auto-invoked from your agent** — verify install state. First, run `node install.mjs --list-targets` to see which harnesses the installer recognizes and whether each is detected on this machine. Then for each harness:
    - Claude Code: `~/.claude/skills/codex-image-gen/SKILL.md` exists and contains an absolute path (no `<<INSTALL_PATH>>` / `<<SCRIPT_PATH>>` placeholders left). `~/.claude/settings.json`'s `permissions.allow` array contains a `Bash(node /abs/path/to/codex-image-gen.mjs *)` rule.
    - opencode: `~/.config/opencode/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required (opencode is permissive by default).
    - Cline: `~/.cline/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required.
    - Cursor: `~/.cursor/skills/codex-image-gen/SKILL.md` exists with the absolute path baked in. No settings patch is required. (If you used `--target=agents`, the file is at `~/.agents/skills/codex-image-gen/SKILL.md` instead and Cursor reads it from there too.)
    - **Restart the agent** if it was running when you installed — most don't hot-reload skills or settings.
 
-5. **Worried about accidental API billing** — the wrapper strips `OPENAI_API_KEY` from the spawned env before invoking codex, so subscription routing is locked in regardless of what your shell has set. You can verify by running `codex` manually with the env var set vs unset and observing the billing route in codex's session log under `~/.codex/sessions/`.
+6. **Worried about accidental API billing** — the wrapper strips `OPENAI_API_KEY` from the spawned env before invoking codex, so subscription routing is locked in regardless of what your shell has set. You can verify by running `codex` manually with the env var set vs unset and observing the billing route in codex's session log under `~/.codex/sessions/`.
 
 ## Cost & timing
 
@@ -310,14 +312,14 @@ If a run fails (`ok: false`) the tmp work dir is preserved so you can investigat
 - **Why we delete `OPENAI_API_KEY`**: codex routes to API billing if it sees that variable, silently. We force subscription routing by stripping it from the spawned env.
 - **Why runs are serialized machine-wide**: codex stores auth and session/image state under `CODEX_HOME`, which must remain shared for ChatGPT subscription billing. That shared state is what concurrent runs corrupt (codex#11435) or read each other's fallback images from (`$CODEX_HOME/generated_images`, default `~/.codex/generated_images`) — and it is global, not per-project. So the wrapper takes a single global lock (`$CODEX_HOME/.codex-image-gen.lock`) that serializes every run on the machine, including ones in unrelated projects. Runs in different cwds still get their own session dirs and outputs; they just don't overlap in time. A crashed run's lock is reclaimed via dead-pid detection (plus an age backstop and a SIGINT/SIGTERM cleanup handler) so a Ctrl-C never poisons the lock.
 - **Why prompt is piped via stdin**: `codex exec` accepts the prompt as a positional arg, but on Windows with `shell:true` (required to spawn `codex.cmd` post-CVE-2024-27980) Node concatenates args without escaping, so a multi-word prompt gets split. Stdin sidesteps the whole issue.
-- **Why `--full-auto`**: skips codex's per-shell-command approval prompts so the workflow is hands-off.
+- **Why `--sandbox workspace-write`**: lets codex write the images into its working directory without per-command prompts, and nowhere else. `codex exec` is non-interactive and has no approval-policy flag, so the sandbox mode is all it needs. (Releases before 0.5.0 passed `--full-auto`, which codex removed from `codex exec` in 0.147.0 ([openai/codex#36054](https://github.com/openai/codex/pull/36054); deprecated in [#20133](https://github.com/openai/codex/pull/20133)); current codex rejects it before doing anything.)
 - **Why `--cd` to the session output dir**: keeps codex's `workspace-write` sandbox confined to that directory. It can read from `~/.codex/` (its own state) but can only write into our session dir.
 - **Why `edit` mode stages references via copy instead of `codex exec -i`**: in practice, codex's `image_gen` tool reads images that exist inside its working directory, but the `-i path/to/file` argument does not reliably surface external files into that workspace. Copying each reference into `<sessionDir>/output/references/<basename>` is portable across operating systems (no symlink permission issues on Windows, no same-filesystem constraint of hardlinks) and the disk overhead is trivial since references are deleted with the rest of tmp on success.
 - **Why `@<basename>` substitution in `--instruction`**: the model needs the literal staged path (`references/alien.png`) inside the prompt, but the user wrote the prompt before knowing the staging dir. The `@`-token form lets the user write naturally with the basename they passed, gets validated against the staged set up-front (so typos fail before burning quota), and is substituted into the codex-bound prompt automatically.
 
 ## Compatibility notes
 
-- Live-tested on Windows 11 + codex CLI 0.125 against a ChatGPT Team plan. POSIX (macOS, Linux) is exercised by CI (Ubuntu + macOS, Node 18/20/22) via the fake-codex test harness, but the live billing path on POSIX is unverified — please open an issue if you hit anything platform-specific against a real ChatGPT subscription.
+- Live-tested on Windows 11 + codex CLI 0.164.0 against a ChatGPT subscription. The `codex exec` flags are checked against codex CLI 0.164.0: the test suite's fake codex rejects any flag that version's `codex exec --help` doesn't list, and `tests/codex-flags.test.mjs` checks the emitted flags against the real CLI whenever one is on PATH. POSIX (macOS, Linux) is exercised by CI (Ubuntu + macOS, Node 18/20/22) via the fake-codex test harness, but the live billing path on POSIX is unverified — please open an issue if you hit anything platform-specific against a real ChatGPT subscription.
 - `shell: true` is enabled on Windows only (required to spawn the `codex.cmd` shim post-CVE-2024-27980); on POSIX the script uses `shell: false` since `codex` resolves to a real binary.
 - Requires Node 18+ for nullish coalescing (`??`) and `process.removeAllListeners`.
 

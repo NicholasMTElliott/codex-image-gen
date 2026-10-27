@@ -647,7 +647,13 @@ function runCodex(prompt, env, cwd) {
     // every run. Safe here because our prompt only asks codex to generate
     // images and copy them into the same dir we created — no destructive
     // operations elsewhere.
-    const child = spawn('codex', ['exec', '--full-auto', '--skip-git-repo-check', '--cd', cwd], {
+    // --sandbox workspace-write: lets codex write images into --cd and
+    // nowhere else. Replaces --full-auto, which codex removed from `codex exec`
+    // in 0.147.0 (openai/codex#36054; deprecated in #20133) and now rejects at
+    // argument parsing. `codex exec` is non-interactive and
+    // has no approval-policy flag (`-a` is top-level/interactive only), so the
+    // sandbox mode is the whole replacement.
+    const child = spawn('codex', ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--cd', cwd], {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: isWin,
