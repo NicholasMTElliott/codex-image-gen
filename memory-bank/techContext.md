@@ -1,7 +1,7 @@
 # techContext
 
 ## Stack
-- **Runtime:** Node 22+ (`engines`; 18 and 20 are EOL). CI: Node 22/24/26 × ubuntu/macos/windows (`test.yml`; `release.yml` runs the same matrix before publishing).
+- **Runtime:** Node 22+ (`engines`; 18 and 20 are EOL). CI: Node 22/24/26 × ubuntu/macos/windows (`test.yml`). `release.yml` re-tests on ubuntu/Node 22 only before publishing. `install.mjs` pre-flight exits 1 if the Node running it or the `node` on PATH is below 22 (`MIN_NODE_MAJOR`).
 - **Language:** JavaScript ESM (`.mjs`). No TypeScript, no transpile step.
 - **Std-lib only:** `node:child_process`, `node:fs`, `node:os`, `node:path`, `node:url`. No npm deps (`package.json` carries metadata, `engines` and scripts only).
 - **External binary:** `codex` CLI on PATH, authenticated against a ChatGPT plan via `codex login`.

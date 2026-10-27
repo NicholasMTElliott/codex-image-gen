@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import { mktempDir, REPO_ROOT, runInstaller, runInstallerCustom } from './helpers.mjs';
 
 function paths(home) {
@@ -490,4 +490,28 @@ test('52. error paths print friendly diagnostics (no raw stack, no ERROR: on con
   assert.doesNotMatch(continuationMatch[1], /^ERROR:/, 'continuation guidance should not be prefixed with ERROR:');
   // No raw stack trace by default.
   assert.doesNotMatch(r.stderr, /at .+install\.mjs:\d+/, 'no raw stack trace');
+});
+
+test('71. pre-flight refuses a node on PATH older than 22, before touching HOME', async () => {
+  // A fake `node` first on PATH reports v20. The installer itself still runs
+  // on the current Node (process.execPath), so this exercises the PATH check:
+  // the installed skill runs `node <script>`, which resolves via PATH.
+  const fakeNodeDir = mktempDir('cig-oldnode-');
+  if (process.platform === 'win32') {
+    writeFileSync(join(fakeNodeDir, 'node.cmd'), '@echo v20.11.1\r\n');
+  } else {
+    const shim = join(fakeNodeDir, 'node');
+    writeFileSync(shim, '#!/bin/sh\necho v20.11.1\n');
+    chmodSync(shim, 0o755);
+  }
+  const home = mktempDir('cig-home-');
+  const key = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const r = await runInstallerCustom({
+    home,
+    skipShim: true,
+    env: { [key]: `${fakeNodeDir}${delimiter}${process.env[key] ?? ''}` },
+  });
+  assert.equal(r.code, 1, `expected exit 1; stdout=${r.stdout} stderr=${r.stderr}`);
+  assert.match(r.stderr, /node on PATH is v20\.11\.1; codex-image-gen needs Node 22\+/);
+  assert.equal(existsSync(join(home, '.codex-image-gen')), false, 'nothing installed');
 });
