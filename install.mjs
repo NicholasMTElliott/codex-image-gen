@@ -48,7 +48,7 @@
  *               skill entries. Use --target=agents to install.
  *
  * Prereqs (verified during install):
- *   - Node 18+ on PATH
+ *   - Node 22+ on PATH
  *   - codex CLI on PATH (run `codex login` separately if not yet authed)
  */
 
@@ -275,7 +275,7 @@ function install(parsed) {
   const nodeVer = getVersion('node');
   if (!nodeVer) {
     err('node not found on PATH.');
-    warn('  Install Node 18+ from https://nodejs.org and re-run.');
+    warn('  Install Node 22+ from https://nodejs.org and re-run.');
     process.exit(1);
   }
   log(`  [ok] node ${nodeVer}`);

@@ -1,9 +1,9 @@
 # techContext
 
 ## Stack
-- **Runtime:** Node 18+ (uses `??`, `process.removeAllListeners`).
+- **Runtime:** Node 22+ (`engines`; 18 and 20 are EOL). CI: Node 22/24/26 × ubuntu/macos/windows (`test.yml`; `release.yml` runs the same matrix before publishing).
 - **Language:** JavaScript ESM (`.mjs`). No TypeScript, no transpile step.
-- **Std-lib only:** `node:child_process`, `node:fs`, `node:os`, `node:path`, `node:url`. No `package.json`, no npm deps.
+- **Std-lib only:** `node:child_process`, `node:fs`, `node:os`, `node:path`, `node:url`. No npm deps (`package.json` carries metadata, `engines` and scripts only).
 - **External binary:** `codex` CLI on PATH, authenticated against a ChatGPT plan via `codex login`.
 - **Image model:** `gpt-image-2` via codex (codex picks quality automatically). Only three output sizes are supported: 1024×1024 (square), 1024×1536 (portrait), 1536×1024 (landscape) — selected via `--aspect`. No other sizes are honored upstream.
 
@@ -48,7 +48,7 @@ Installer paths (per-target; the binary is shared):
 - Agents (`explicitOnly`, never auto-installed): skill at `~/.agents/skills/codex-image-gen/SKILL.md`. Cross-harness shared dir read by Cursor + opencode. Auto-installing would duplicate entries in harnesses that read both their per-harness path and `~/.agents/skills/`; user must opt in via `--target=agents` or `--all`.
 
 ## Dependencies (tree)
-- Required at runtime: `node` ≥ 18, `codex` CLI on PATH, ChatGPT auth (`codex login`).
+- Required at runtime: `node` ≥ 22, `codex` CLI on PATH, ChatGPT auth (`codex login`).
 - Optional (any one suffices for auto-invocation): a coding-agent harness that reads SKILL.md — Claude Code, opencode, Cline, Cursor, or any other target the installer registers with.
 
 ## Tooling patterns

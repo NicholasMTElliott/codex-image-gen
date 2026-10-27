@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Requires Node 22+ (`engines` was `>=18`). Node 18 and 20 are end-of-life.
+- CI tests Node 22, 24 and 26 on Ubuntu, macOS and Windows (was 18/20/22),
+  uses `actions/checkout@v7` and `actions/setup-node@v7`, and cancels a pull
+  request's superseded runs.
+
 ## [0.5.0] - 2026-10-27
 
 ### Fixed
