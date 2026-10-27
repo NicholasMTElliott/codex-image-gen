@@ -1,7 +1,7 @@
 /**
  * Allowlist of `codex exec` options, copied from the real CLI's help output.
  *
- * Source: `codex exec --help`, codex-cli 0.156.1 (2026-10-27).
+ * Source: `codex exec --help`, codex-cli 0.164.0 (2026-10-27).
  *
  * The fake codex rejects any flag not listed here, the way the real CLI's
  * argument parser does. Without this the fake accepted anything, so a flag
@@ -15,7 +15,7 @@
  *
  * Value: true if the option takes a value (`--cd <DIR>`), false for a switch.
  */
-export const CODEX_EXEC_FLAGS_VERSION = '0.156.1';
+export const CODEX_EXEC_FLAGS_VERSION = '0.164.0';
 
 export const CODEX_EXEC_FLAGS = new Map([
   ['-c', true], ['--config', true],
@@ -40,6 +40,7 @@ export const CODEX_EXEC_FLAGS = new Map([
   ['--worktree', false],
   ['--add-dir', true],
   ['--thread-source', true],
+  ['--cyber-access-program', true],
   ['--skip-git-repo-check', false],
   ['--ephemeral', false],
   ['--ignore-user-config', false],

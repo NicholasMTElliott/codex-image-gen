@@ -14,8 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (openai/codex#36054; deprecated in #20133) and now exits 2 on it before
   generating anything, so every run failed. The tool now passes
   `--sandbox workspace-write`, which keeps codex's writes confined to the
-  per-session `--cd` directory. Flags verified against codex CLI 0.156.1's
-  parser.
+  per-session `--cd` directory. Live-tested against codex CLI 0.164.0.
 - Concurrent runs no longer contaminate each other. Every run on the machine
   now queues on one global lock (`$CODEX_HOME/.codex-image-gen.lock`,
   relocatable via `CODEX_IMAGE_GEN_LOCK_DIR`) held around the codex call, the
@@ -26,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Test harness: the fake codex now rejects any flag that the real
-  `codex exec --help` (0.156.1) doesn't list, so a removed upstream flag fails
+  `codex exec --help` (0.164.0) doesn't list, so a removed upstream flag fails
   CI instead of passing silently. The allowlist lives in
   `tests/fake-codex/exec-flags.mjs`.
 - New `tests/codex-flags.test.mjs`: when a real `codex` is on PATH, checks
