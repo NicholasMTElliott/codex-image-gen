@@ -22,6 +22,11 @@ export const CODEX_EXEC_FLAGS = new Map([
   ['--enable', true],
   ['--disable', true],
   ['--strict-config', false],
+  // -i/--image is variadic in the real CLI (`-i, --image <FILE>...`): it takes
+  // one or more values, so a positional prompt placed right after it may be
+  // read as another image. Modeled here as single-value, so the fake would
+  // accept argv the real CLI parses differently. If the tool ever passes -i
+  // (e.g. edit mode), model it as variadic and test that argv shape.
   ['-i', true], ['--image', true],
   ['-m', true], ['--model', true],
   ['--oss', false],
