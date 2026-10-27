@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Works with current codex CLI again. The tool passed `--full-auto` to
-  `codex exec`; codex removed that flag (around 0.147–0.152) and now exits 2
-  on it before generating anything, so every run failed. The tool now passes
+  `codex exec`; codex removed that flag from `codex exec` in 0.147.0
+  (openai/codex#36054; deprecated in #20133) and now exits 2 on it before
+  generating anything, so every run failed. The tool now passes
   `--sandbox workspace-write`, which keeps codex's writes confined to the
-  per-session `--cd` directory. Verified against codex CLI 0.156.1.
+  per-session `--cd` directory. Flags verified against codex CLI 0.156.1's
+  parser.
 - Concurrent runs no longer contaminate each other. Every run on the machine
   now queues on one global lock (`$CODEX_HOME/.codex-image-gen.lock`,
   relocatable via `CODEX_IMAGE_GEN_LOCK_DIR`) held around the codex call, the

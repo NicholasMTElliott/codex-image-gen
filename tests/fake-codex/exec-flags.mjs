@@ -5,8 +5,9 @@
  *
  * The fake codex rejects any flag not listed here, the way the real CLI's
  * argument parser does. Without this the fake accepted anything, so a flag
- * removed upstream (`--full-auto`, gone by ~0.152) kept CI green while every
- * real run failed at argument parsing.
+ * removed upstream (`--full-auto`, removed from `codex exec` in codex 0.147.0,
+ * openai/codex#36054) kept CI green while every real run failed at argument
+ * parsing.
  *
  * When you bump the codex version this was taken from, re-copy the list from
  * the new help text and update the version above. tests/codex-flags.test.mjs
